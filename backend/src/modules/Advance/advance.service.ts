@@ -153,16 +153,14 @@ export const getAllAdvances =
      */
 
     if (search) {
-
+      const searchNum = Number(search);
       where.OR = [
-
         {
           advanceNumber: {
             contains: search,
             mode: "insensitive",
           },
         },
-
         {
           customer: {
             is: {
@@ -173,7 +171,6 @@ export const getAllAdvances =
             },
           },
         },
-
         {
           customer: {
             is: {
@@ -184,6 +181,16 @@ export const getAllAdvances =
           },
         },
       ];
+
+      if (!isNaN(searchNum)) {
+        where.OR.push({
+          customer: {
+            is: {
+              code: searchNum,
+            },
+          },
+        });
+      }
     }
 
     const [advances, total] =
@@ -198,6 +205,7 @@ export const getAllAdvances =
             customer: {
               select: {
                 id: true,
+                code: true,
                 name: true,
                 mobile: true,
               },

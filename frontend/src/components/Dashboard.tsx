@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { SearchableSelect } from './SearchableSelect';
 import {
   useUIStore,
   useAuthStore,
@@ -410,10 +411,17 @@ export default function Dashboard() {
   // ── Derived state ──────────────────────────────────────────────────────────
 
   const filteredAdvances = advances.filter(a => {
-    const matchesSearch = !advSearchQuery ||
-      a.advanceNumber.toLowerCase().includes(advSearchQuery.toLowerCase()) ||
-      a.customer?.name.toLowerCase().includes(advSearchQuery.toLowerCase()) ||
-      a.customer?.mobile.includes(advSearchQuery);
+    const farmer = farmers.find(f => f.id === a.customerId);
+    const farmerCodeStr = farmer ? String(farmer.code) : ((a.customer as any)?.code !== undefined ? String((a.customer as any).code) : '');
+
+    const query = advSearchQuery.trim().toLowerCase();
+    const matchesSearch = !query ||
+      a.advanceNumber.toLowerCase().includes(query) ||
+      (a.customer?.name && a.customer.name.toLowerCase().includes(query)) ||
+      (a.customer?.mobile && a.customer.mobile.includes(query)) ||
+      (farmerCodeStr && farmerCodeStr.toLowerCase().includes(query)) ||
+      (a.notes && a.notes.toLowerCase().includes(query));
+
     const matchesStatus = advStatusFilter === 'ALL' || a.status === advStatusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -512,6 +520,46 @@ export default function Dashboard() {
 
   const availablePurchases = purchases.filter(p => p.remainingQuantity > 0);
   const outOfStockPurchases = purchases.filter(p => p.remainingQuantity <= 0);
+
+  // Memoized options for SearchableSelect inputs
+  const farmerOptionsForMilkEntry = useMemo(() => {
+    return farmers.map(f => ({
+      value: String(f.code),
+      code: f.code,
+      label: f.name,
+      subLabel: f.milkType ? `${f.milkType} MILK` : '',
+      searchTerms: `${f.mobile || ''}`
+    }));
+  }, [farmers]);
+
+  const farmerOptionsForId = useMemo(() => {
+    return farmers.map(f => ({
+      value: f.id,
+      code: f.code,
+      label: f.name,
+      subLabel: f.mobile ? `📱 ${f.mobile}` : '',
+      searchTerms: `${f.milkType || ''}`
+    }));
+  }, [farmers]);
+
+  const feedBatchOptions = useMemo(() => {
+    return availablePurchases.map(p => ({
+      value: p.id,
+      label: p.foodName,
+      subLabel: `${t('landing', 'stockLeft')}: ${p.remainingQuantity} bags | ₹${p.sellRate}/bag`,
+      searchTerms: p.foodName
+    }));
+  }, [availablePurchases, t]);
+
+  const dealerOptions = useMemo(() => {
+    return dealers.map(d => ({
+      value: d.id,
+      code: d.code,
+      label: d.name,
+      subLabel: d.phone ? `📱 ${d.phone}` : (d.address || ''),
+      searchTerms: `${d.address || ''}`
+    }));
+  }, [dealers]);
 
   const navItems = [
     { id: 'overview', label: t('dashboard', 'navOverview'), icon: LayoutDashboard },
@@ -1308,20 +1356,14 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'farmerLabel')}</label>
-                  <select
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{t('dashboard', 'farmerLabel')}</label>
+                  <SearchableSelect
+                    options={farmerOptionsForMilkEntry}
                     value={selectedFarmerCode}
-                    onChange={(e) => setSelectedFarmerCode(e.target.value)}
-                    className="mt-1 w-full light-input rounded-lg text-xs py-2 px-2"
+                    onChange={(val) => setSelectedFarmerCode(val)}
+                    placeholder={t('dashboard', 'selectFarmer')}
                     required
-                  >
-                    <option value="">{t('dashboard', 'selectFarmer')}</option>
-                    {farmers.map(f => (
-                      <option key={f.id} value={f.code}>
-                        {f.code} - {f.name} ({f.milkType})
-                      </option>
-                    ))}
-                  </select>
+                  />
                 </div>
 
                 {foundFarmer && (
@@ -1683,23 +1725,25 @@ export default function Dashboard() {
 
               <form onSubmit={handleFeedSaleSubmit} className="space-y-4">
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'farmerLabel')}</label>
-                  <select value={saleFarmerId} onChange={(e) => setSaleFarmerId(e.target.value)} className="mt-1 w-full light-input rounded-lg text-xs py-2 px-2" required>
-                    <option value="">{t('dashboard', 'chooseFarmer')}</option>
-                    {farmers.map(f => <option key={f.id} value={f.id}>{f.code} - {f.name}</option>)}
-                  </select>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{t('dashboard', 'farmerLabel')}</label>
+                  <SearchableSelect
+                    options={farmerOptionsForId}
+                    value={saleFarmerId}
+                    onChange={(val) => setSaleFarmerId(val)}
+                    placeholder={t('dashboard', 'chooseFarmer')}
+                    required
+                  />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'selectFeedBatch')}</label>
-                  <select value={salePurchaseId} onChange={(e) => setSalePurchaseId(e.target.value)} className="mt-1 w-full light-input rounded-lg text-xs py-2 px-2" required>
-                    <option value="">{t('dashboard', 'chooseBatch')}</option>
-                    {availablePurchases.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.foodName} ({t('landing', 'stockLeft')}: {p.remainingQuantity} / ₹{p.sellRate})
-                      </option>
-                    ))}
-                  </select>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{t('dashboard', 'selectFeedBatch')}</label>
+                  <SearchableSelect
+                    options={feedBatchOptions}
+                    value={salePurchaseId}
+                    onChange={(val) => setSalePurchaseId(val)}
+                    placeholder={t('dashboard', 'chooseBatch')}
+                    required
+                  />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -1862,11 +1906,14 @@ export default function Dashboard() {
 
             <div className="light-panel p-6 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
               <div>
-                <label className="block text-xs font-semibold text-gray-600">Farmer</label>
-                <select value={billingFarmerId} onChange={(e) => setBillingFarmerId(e.target.value)} className="mt-1 w-full light-input rounded-lg text-xs py-2 px-2">
-                  <option value="">-- Choose Farmer --</option>
-                  {farmers.map(f => <option key={f.id} value={f.id}>{f.code} - {f.name}</option>)}
-                </select>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Farmer</label>
+                <SearchableSelect
+                  options={farmerOptionsForId}
+                  value={billingFarmerId}
+                  onChange={(val) => setBillingFarmerId(val)}
+                  placeholder="-- All Farmers (Optional Filter) --"
+                  clearable
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600">Start Date</label>
@@ -2077,7 +2124,7 @@ export default function Dashboard() {
                     type="text"
                     value={advSearchQuery}
                     onChange={(e) => setAdvSearchQuery(e.target.value)}
-                    placeholder="Search by advance #, farmer name or mobile..."
+                    placeholder="Search by farmer code, advance #, name or mobile..."
                     className="w-full light-input text-xs py-2 px-3 pl-9 rounded-lg"
                   />
                   <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
@@ -2132,7 +2179,23 @@ export default function Dashboard() {
                       <tr key={adv.id} className="hover:bg-gray-50">
                         <td className="py-3.5 font-mono font-bold text-[#0052cc]">{adv.advanceNumber}</td>
                         <td className="py-3.5 font-semibold text-[#091e42]">
-                          {adv.customer?.name ?? '—'} <span className="text-gray-400 font-normal">({adv.customer?.mobile})</span>
+                          {(() => {
+                            const farmer = farmers.find(f => f.id === adv.customerId);
+                            const code = farmer ? farmer.code : (adv.customer as any)?.code;
+                            return (
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {code !== undefined && code !== null && (
+                                  <span className="font-mono font-bold text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200 text-[10px]">
+                                    #{code}
+                                  </span>
+                                )}
+                                <span>{adv.customer?.name ?? '—'}</span>
+                                {adv.customer?.mobile && (
+                                  <span className="text-gray-400 font-normal text-[11px]">({adv.customer.mobile})</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3.5 text-gray-500">{adv.givenDate ? String(adv.givenDate).split('T')[0] : '—'}</td>
                         <td className="py-3.5 text-right font-mono font-bold text-[#091e42]">₹{Number(adv.originalAmount || 0).toFixed(2)}</td>
@@ -2579,11 +2642,14 @@ export default function Dashboard() {
             </div>
             <form onSubmit={handleRecordPurchaseSubmit} className="p-5 space-y-4 text-xs">
               <div>
-                <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'wholesaleDealer')}</label>
-                <select value={pDealerId} onChange={(e) => setPDealerId(e.target.value)} className="mt-1 w-full light-input rounded-lg py-2 px-2" required>
-                  <option value="">{t('dashboard', 'chooseDealer')}</option>
-                  {dealers.map(d => <option key={d.id} value={d.id}>{d.code} - {d.name}</option>)}
-                </select>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">{t('dashboard', 'wholesaleDealer')}</label>
+                <SearchableSelect
+                  options={dealerOptions}
+                  value={pDealerId}
+                  onChange={(val) => setPDealerId(val)}
+                  placeholder={t('dashboard', 'chooseDealer')}
+                  required
+                />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'feedProductName')}</label>
@@ -2632,18 +2698,14 @@ export default function Dashboard() {
             </div>
             <form onSubmit={handleCreateAdvanceSubmit} className="p-5 space-y-4 text-xs">
               <div>
-                <label className="block text-xs font-semibold text-gray-600">{t('dashboard', 'selectFarmer')}</label>
-                <select
+                <label className="block text-xs font-semibold text-gray-600 mb-1">{t('dashboard', 'selectFarmer')}</label>
+                <SearchableSelect
+                  options={farmerOptionsForId}
                   value={advCustomerId}
-                  onChange={(e) => setAdvCustomerId(e.target.value)}
-                  className="mt-1 w-full light-input rounded-lg py-2 px-2"
+                  onChange={(val) => setAdvCustomerId(val)}
+                  placeholder={t('dashboard', 'selectFarmer')}
                   required
-                >
-                  <option value="">{t('dashboard', 'selectFarmer')}</option>
-                  {farmers.map(f => (
-                    <option key={f.id} value={f.id}>{f.code} - {f.name} ({f.mobile})</option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div>

@@ -29,6 +29,7 @@ export interface Advance {
   createdAt: string;
   customer?: {
     id: string;
+    code?: number;
     name: string;
     mobile: string;
   };
@@ -38,6 +39,7 @@ export interface Advance {
 export interface CustomerAdvanceSummary {
   customer: {
     id: string;
+    code?: number;
     name: string;
     mobile: string;
   };
