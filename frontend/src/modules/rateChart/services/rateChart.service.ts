@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import { attemptTokenRefresh } from '../../../utils/api';
 import type {
   RateChart,
   PaginatedRateCharts,
@@ -36,8 +37,14 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+      const refreshed = await attemptTokenRefresh();
+      if (refreshed) {
+        return apiClient(originalRequest);
+      }
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       window.dispatchEvent(new Event('auth-error'));

@@ -10,6 +10,12 @@ from "../../db/index.js";
 import ApiError
 from "../../utils/ApiError.js";
 
+import {
+    issueTokenPair,
+    rotateRefreshToken,
+    revokeRefreshToken,
+} from "../../utils/generateToken.js";
+
 /**
  * =====================================================
  * VERIFY PHONE
@@ -213,24 +219,11 @@ export const register =
             });
 
         /**
-         * GENERATE ACCESS TOKEN
+         * GENERATE DUAL TOKENS (Short-lived Access Token + Rotated Refresh Token)
          */
 
-        const accessToken =
-            jwt.sign(
-                {
-                    id:
-                        adminUser.id,
-                },
-
-                process.env
-                    .JWT_SECRET!,
-
-                {
-                    expiresIn:
-                        "7d",
-                }
-            );
+        const { accessToken, refreshToken } =
+            await issueTokenPair(adminUser.id);
 
         /**
          * REMOVE PASSWORD
@@ -245,6 +238,7 @@ export const register =
 
         return {
             accessToken,
+            refreshToken,
 
             admin:
                 safeAdmin,
@@ -309,24 +303,11 @@ export const login =
         }
 
         /**
-         * GENERATE JWT
+         * GENERATE DUAL TOKENS (Short-lived Access Token + Rotated Refresh Token)
          */
 
-        const accessToken =
-            jwt.sign(
-                {
-                    id:
-                        adminUser.id,
-                },
-
-                process.env
-                    .JWT_SECRET!,
-
-                {
-                    expiresIn:
-                        "7d",
-                }
-            );
+        const { accessToken, refreshToken } =
+            await issueTokenPair(adminUser.id);
 
         /**
          * REMOVE PASSWORD
@@ -341,8 +322,71 @@ export const login =
 
         return {
             accessToken,
+            refreshToken,
 
             admin:
                 safeAdmin,
         };
+    };
+
+/**
+ * =====================================================
+ * REFRESH SESSION (TOKEN ROTATION)
+ * =====================================================
+ */
+
+export const refreshSession =
+    async (token: string) => {
+        const { adminId, accessToken, refreshToken } =
+            await rotateRefreshToken(token);
+
+        const adminUser =
+            await prisma.admin.findUnique({
+                where: {
+                    id: adminId,
+                },
+                select: {
+                    id: true,
+                    ownerName: true,
+                    mobile: true,
+                    dairyName: true,
+                    village: true,
+                    taluka: true,
+                    district: true,
+                    state: true,
+                    collectionType: true,
+                    milkType: true,
+                    collectionShift: true,
+                    paymentPeriod: true,
+                    createdAt: true,
+                    updatedAt: true,
+                },
+            });
+
+        if (!adminUser) {
+            throw new ApiError(
+                401,
+                "Admin user not found",
+                {
+                    code: "ADMIN_NOT_FOUND",
+                }
+            );
+        }
+
+        return {
+            accessToken,
+            refreshToken,
+            admin: adminUser,
+        };
+    };
+
+/**
+ * =====================================================
+ * LOGOUT SESSION (REVOCATION)
+ * =====================================================
+ */
+
+export const logoutAdmin =
+    async (refreshToken?: string) => {
+        await revokeRefreshToken(refreshToken);
     };

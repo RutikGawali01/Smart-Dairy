@@ -4,6 +4,7 @@ import {
     verifyPhone,
     register,
     login,
+    refresh,
     logout,
     getMe,
 } from "./auth.controller.js";
@@ -52,6 +53,11 @@ router.post(
     }),
 
     login
+);
+
+router.post(
+    "/refresh",
+    refresh
 );
 
 router.post(
