@@ -62,12 +62,11 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
       const updated = await request<AdminProfile>('/admin/profile', 'PATCH', payload);
       set({ profile: { ...(get().profile || {}), ...updated }, status: 'success' });
 
-      // Synchronize with auth store user and localStorage
+      // Synchronize with auth store user in memory
       const authUser = useAuthStore.getState().user;
       if (authUser) {
         const mergedUser = { ...authUser, ...updated };
         useAuthStore.setState({ user: mergedUser as any });
-        localStorage.setItem('user', JSON.stringify(mergedUser));
       }
 
       return true;

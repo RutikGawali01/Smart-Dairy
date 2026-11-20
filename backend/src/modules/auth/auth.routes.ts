@@ -4,7 +4,11 @@ import {
     verifyPhone,
     register,
     login,
+    logout,
+    getMe,
 } from "./auth.controller.js";
+
+import authMiddleware from "../../middleware/auth.middleware.js";
 
 import { validate }
 from "../../middleware/validate.middleware.js";
@@ -48,6 +52,17 @@ router.post(
     }),
 
     login
+);
+
+router.post(
+    "/logout",
+    logout
+);
+
+router.get(
+    "/me",
+    authMiddleware,
+    getMe
 );
 
 export default router;

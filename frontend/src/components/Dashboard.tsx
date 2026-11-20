@@ -55,7 +55,6 @@ import {
 export default function Dashboard() {
   const setView = useUIStore((state) => state.setView);
   const user = useAuthStore((state) => state.user);
-  const token = useAuthStore((state) => state.token);
   const logout = useAuthStore((state) => state.logout);
   const { t } = useTranslation();
 
@@ -133,24 +132,24 @@ export default function Dashboard() {
 
   // Initial core bootstrap
   useEffect(() => {
-    if (token) {
+    if (user) {
       fetchDashboard();
       fetchFarmers();
       fetchProfile();
       fetchCollections();
     }
-  }, [token]);
+  }, [user]);
 
   // Refresh dashboard stats every 60 seconds
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
     const interval = setInterval(() => fetchDashboard(), 60000);
     return () => clearInterval(interval);
-  }, [token]);
+  }, [user]);
 
   // Targeted Data Refetching on Tab Switch
   useEffect(() => {
-    if (!token) return;
+    if (!user) return;
     switch (dbTab) {
       case 'overview':
         fetchDashboard();
@@ -186,7 +185,7 @@ export default function Dashboard() {
         fetchProfile();
         break;
     }
-  }, [dbTab, token]);
+  }, [dbTab, user]);
 
   // Modal control states
   const [farmerModalOpen, setFarmerModalOpen] = useState(false);
@@ -352,15 +351,15 @@ export default function Dashboard() {
     }
   }, [profile, user]);
 
-  // Fetch milk history whenever date range, farmer, or token changes
+  // Fetch milk history whenever date range, farmer, or user session changes
   useEffect(() => {
-    if (token) {
+    if (user) {
       fetchHistory(billingStartDate, billingEndDate, billingFarmerId || undefined);
       if (billingFarmerId) {
         fetchCustomerAdvances(billingFarmerId);
       }
     }
-  }, [token, billingStartDate, billingEndDate, billingFarmerId]);
+  }, [user, billingStartDate, billingEndDate, billingFarmerId]);
 
   // Auto-dismiss profile notification toasts after 4 seconds
   useEffect(() => {

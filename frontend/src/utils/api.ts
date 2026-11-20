@@ -5,11 +5,12 @@ export async function request<T = any>(
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT' = 'GET',
   body?: any
 ): Promise<T> {
-  const token = localStorage.getItem('token');
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
   };
 
+  // Optional in-memory / fallback token
+  const token = localStorage.getItem('token');
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -17,6 +18,7 @@ export async function request<T = any>(
   const config: RequestInit = {
     method,
     headers,
+    credentials: 'include', // Send and receive HttpOnly cookies across origins
   };
 
   if (body) {

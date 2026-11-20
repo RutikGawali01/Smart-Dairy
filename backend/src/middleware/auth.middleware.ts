@@ -29,20 +29,22 @@ declare global {
 const authMiddleware = asyncHandler(
   async (req: Request, res: Response, next: NextFunction) => {
 
-    //GET AUTHORIZATION HEADER
-    const authHeader = req.headers.authorization;
+    // 1. Check HttpOnly cookie first, then fallback to Bearer header
+    let token: string | undefined = req.cookies?.accessToken || req.cookies?.token;
+
+    if (!token) {
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        token = authHeader.split(" ")[1];
+      }
+    }
 
     // CHECK TOKEN EXISTS
-
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      throw new ApiError(401, "Unauthorized access", {
+    if (!token) {
+      throw new ApiError(401, "Unauthorized access. No authentication token provided.", {
         code: "NO_TOKEN",
       });
     }
-
-    // EXTRACT TOKEN
-
-    const token = authHeader.split(" ")[1];
 
     /**
      * =============================================

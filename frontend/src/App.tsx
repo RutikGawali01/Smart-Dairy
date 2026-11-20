@@ -10,9 +10,10 @@ function App() {
   const setAuthModal = useUIStore((state) => state.setAuthModal);
 
   const user = useAuthStore((state) => state.user);
+  const authChecked = useAuthStore((state) => state.authChecked);
   const initialize = useAuthStore((state) => state.initialize);
 
-  // Restore auth state from localStorage on first mount
+  // Restore auth state from HttpOnly cookie on first mount
   useEffect(() => {
     initialize();
 
@@ -26,13 +27,22 @@ function App() {
     return () => window.removeEventListener('auth-error', handleAuthError);
   }, [initialize, setView, setAuthModal]);
 
-  // Route guard: redirect unauthenticated users away from dashboard
+  // If user is already authenticated on initial load, route directly to dashboard
   useEffect(() => {
+    if (authChecked && user && currentView === 'landing') {
+      setView('dashboard');
+    }
+  }, [authChecked, user, currentView, setView]);
+
+  // Route guard: redirect unauthenticated users away from dashboard once auth check is complete
+  useEffect(() => {
+    if (!authChecked) return;
+
     if (currentView === 'dashboard' && !user) {
       setView('landing');
       setAuthModal(true, 'login');
     }
-  }, [currentView, user, setView, setAuthModal]);
+  }, [currentView, user, authChecked, setView, setAuthModal]);
 
   return (
     <div className="min-h-screen bg-[#0b0f19]">

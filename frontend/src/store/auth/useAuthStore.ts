@@ -46,18 +46,20 @@ export interface AuthState {
   tempOwnerName: string;
   tempMobile: string;
   _confirmationResult: ConfirmationResult | null;
+  authChecked: boolean;
+  isCheckingAuth: boolean;
 
   // Status
   status: StoreStatus;
   error: string | null;
 
   // Actions
-  initialize: () => void;
+  initialize: () => Promise<void>;
   sendOtp: (ownerName: string, mobile: string) => Promise<boolean>;
   confirmOtp: (otp: string) => Promise<boolean>;
   register: (details: Omit<Admin, 'id' | 'mobile' | 'ownerName'> & { password: string }) => Promise<boolean>;
   login: (mobile: string, password: string) => Promise<boolean>;
-  logout: () => void;
+  logout: () => Promise<void>;
   clearError: () => void;
   resetToPhoneStep: () => void;
   reset: () => void;
@@ -71,6 +73,8 @@ const initialAuthData = {
   tempOwnerName: '',
   tempMobile: '',
   _confirmationResult: null,
+  authChecked: false,
+  isCheckingAuth: false,
   status: 'idle' as StoreStatus,
   error: null,
 };
@@ -88,18 +92,21 @@ function resetAllBusinessStores() {
 export const useAuthStore = create<AuthState>((set, get) => ({
   ...initialAuthData,
 
-  initialize: () => {
-    const savedToken = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (savedToken && savedUser) {
-      try {
-        set({ token: savedToken, user: JSON.parse(savedUser), status: 'success' });
-      } catch {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        set({ token: null, user: null, status: 'idle' });
+  initialize: async () => {
+    set({ isCheckingAuth: true });
+    try {
+      const adminUser = await request<Admin>('/auth/me');
+      if (adminUser && adminUser.id) {
+        set({ user: adminUser, token: null, isCheckingAuth: false, authChecked: true, status: 'success' });
+        return;
       }
+    } catch {
+      // Session missing or expired on server
     }
+    // Clean up any legacy localStorage remnants
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    set({ user: null, token: null, isCheckingAuth: false, authChecked: true, status: 'idle' });
   },
 
   sendOtp: async (ownerName, mobile) => {
@@ -187,14 +194,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const adminUser: Admin = res.admin;
       const accessToken: string = res.accessToken;
 
-      localStorage.setItem('token', accessToken);
-      localStorage.setItem('user', JSON.stringify(adminUser));
+      // Clean up legacy localStorage tokens - auth now uses HttpOnly cookies
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
 
       set({
         user: adminUser,
         token: accessToken,
         tempToken: null,
         registrationProgress: 'phone',
+        authChecked: true,
         status: 'success',
       });
       return true;
@@ -216,12 +225,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const adminUser: Admin = res.admin;
       const accessToken: string = res.accessToken;
 
-      localStorage.setItem('token', accessToken);
-      localStorage.setItem('user', JSON.stringify(adminUser));
+      // Clean up legacy localStorage tokens - auth now uses HttpOnly cookies
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
 
       set({
         user: adminUser,
         token: accessToken,
+        authChecked: true,
         status: 'success',
       });
       return true;
@@ -231,12 +242,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  logout: () => {
+  logout: async () => {
     clearRecaptchaVerifier();
+    try {
+      await request('/auth/logout', 'POST');
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     resetAllBusinessStores();
-    set({ ...initialAuthData });
+    set({ ...initialAuthData, authChecked: true });
   },
 
   clearError: () => set({ error: null }),
@@ -255,6 +271,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     resetAllBusinessStores();
-    set({ ...initialAuthData });
+    set({ ...initialAuthData, authChecked: true });
   },
 }));

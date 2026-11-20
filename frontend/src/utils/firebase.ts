@@ -8,13 +8,13 @@ import {
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: 'AIzaSyDDv8QjM_l8KL3dmfRJLDkj4qyCGTGmKQ8',
-  authDomain: 'mobile-dairy-5a09a.firebaseapp.com',
-  projectId: 'mobile-dairy-5a09a',
-  storageBucket: 'mobile-dairy-5a09a.firebasestorage.app',
-  messagingSenderId: '984926042103',
-  appId: '1:984926042103:web:e9cec760d40ae383eae0f2',
-  measurementId: 'G-3PJ5PEZXM1', // optional
+  apiKey: "AIzaSyBIwQbfZ52QH0wHoWc9tTQwbjaE8IblH1c",
+  authDomain: "smart-dairy-bd188.firebaseapp.com",
+  projectId: "smart-dairy-bd188",
+  storageBucket: "smart-dairy-bd188.firebasestorage.app",
+  messagingSenderId: "121688421653",
+  appId: "1:121688421653:web:eb7c5f7c3e7b38c854e51c",
+  measurementId: "G-6FCLBWL07Y"
 };
 
 // Prevent re-initialization
