@@ -56,6 +56,7 @@
 - **Theft / Reuse Detection:** If an already-rotated or revoked refresh token is presented, the system treats it as token theft and **revokes all active sessions** for that user.
 - **Path-Scoped Refresh Token:** The refresh cookie path is locked to `/api/v1/auth`. It is never transmitted during normal CRUD operations (`/milk`, `/customer`, `/billing`), reducing network overhead and attack surface.
 - **Redis Whitelist with In-Memory Fallback:** Whitelist is tracked in Redis (`auth:refresh:<adminId>:<tokenId>`). If Redis is temporarily offline in local dev, an in-memory TTL store ensures zero crashes.
+- **Redis Admin Session Caching:** `authMiddleware` caches the authenticated Admin profile in Redis (`session:admin:<id>`) with a 5-minute (300s) TTL. During peak collection shifts, this eliminates redundant `SELECT` queries against PostgreSQL, serving verified sessions in <1ms. Cache is automatically invalidated upon profile, dairy info, settings, or password updates.
 
 ---
 
@@ -75,3 +76,6 @@
 - `POST /api/v1/auth/refresh` — Validates & rotates refresh token, updates both cookies.
 - `POST /api/v1/auth/logout` — Revokes refresh token in Redis and clears both cookies.
 - `GET /api/v1/auth/me` — Authenticates session via access cookie, returns current admin user.
+
+
+

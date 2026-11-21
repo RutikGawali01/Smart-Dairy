@@ -4,6 +4,10 @@ import { Request, Response, NextFunction } from "express";
 
 import { prisma } from "../db/index.js";
 
+import { cache } from "../services/cache.service.js";
+
+import { cacheKeys } from "../utils/cacheKeys.js";
+
 import ApiError from "../utils/ApiError.js";
 
 import asyncHandler from "../utils/asyncHandler.js";
@@ -68,60 +72,53 @@ const authMiddleware = asyncHandler(
 
     /**
      * =============================================
-     * FIND ADMIN
+     * FIND ADMIN (REDIS CACHED SESSION)
      * =============================================
      */
 
-    const admin = await prisma.admin.findUnique({
-      where: {
-        id: decoded.id,
-      },
-
-      /**
-       * NEVER RETURN PASSWORD
-       */
-
-      select: {
-        id: true,
-
-        ownerName: true,
-
-        mobile: true,
-
-        dairyName: true,
-
-        village: true,
-
-        taluka: true,
-
-        district: true,
-
-        state: true,
-
-        collectionType: true,
-
-        milkType: true,
-
-        collectionShift: true,
-
-        paymentPeriod: true,
-
-        createdAt: true,
-
-        updatedAt: true,
-      },
-    });
-
-    /**
-     * =============================================
-     * CHECK ADMIN EXISTS
-     * =============================================
-     */
+    const sessionKey = cacheKeys.adminSession(decoded.id);
+    let admin = await cache.get<any>(sessionKey);
 
     if (!admin) {
-      throw new ApiError(401, "Admin not found", {
-        code: "ADMIN_NOT_FOUND",
+      admin = await prisma.admin.findUnique({
+        where: {
+          id: decoded.id,
+        },
+
+        /**
+         * NEVER RETURN PASSWORD
+         */
+
+        select: {
+          id: true,
+          ownerName: true,
+          mobile: true,
+          dairyName: true,
+          village: true,
+          taluka: true,
+          district: true,
+          state: true,
+          collectionType: true,
+          milkType: true,
+          collectionShift: true,
+          paymentPeriod: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       });
+
+      /**
+       * CHECK ADMIN EXISTS
+       */
+
+      if (!admin) {
+        throw new ApiError(401, "Admin not found", {
+          code: "ADMIN_NOT_FOUND",
+        });
+      }
+
+      // Cache admin session for 5 minutes (300 seconds)
+      await cache.set(sessionKey, admin, 300);
     }
 
     /**

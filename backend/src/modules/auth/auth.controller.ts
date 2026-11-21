@@ -1,10 +1,18 @@
 import type { CookieOptions } from "express";
 
+import jwt from "jsonwebtoken";
+
 import asyncHandler
 from "../../utils/asyncHandler.js";
 
 import ApiResponse
 from "../../utils/ApiResponse.js";
+
+import { cache }
+from "../../services/cache.service.js";
+
+import { cacheKeys }
+from "../../utils/cacheKeys.js";
 
 import * as authService
 from "./auth.service.js";
@@ -182,8 +190,22 @@ export const logout =
     asyncHandler(
         async (req, res) => {
             const incomingRefreshToken = req.cookies?.refreshToken;
+            const incomingAccessToken = req.cookies?.accessToken || req.headers.authorization?.split(" ")[1];
+
             if (incomingRefreshToken) {
                 await authService.logoutAdmin(incomingRefreshToken);
+            }
+
+            // Invalidate cached admin session
+            if (incomingAccessToken) {
+                try {
+                    const decoded: any = jwt.decode(incomingAccessToken);
+                    if (decoded?.id) {
+                        await cache.del(cacheKeys.adminSession(decoded.id));
+                    }
+                } catch {
+                    // Ignore decoding error
+                }
             }
 
             // Clear both HttpOnly session cookies

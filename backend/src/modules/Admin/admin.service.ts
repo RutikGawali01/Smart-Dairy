@@ -3,6 +3,12 @@ import bcrypt from "bcrypt";
 import { prisma }
 from "../../db/index.js";
 
+import { cache }
+from "../../services/cache.service.js";
+
+import { cacheKeys }
+from "../../utils/cacheKeys.js";
+
 import ApiError
 from "../../utils/ApiError.js";
 
@@ -134,7 +140,7 @@ export const updateProfile =
          * UPDATE PROFILE
          */
 
-        return prisma.admin.update({
+        const updatedAdmin = await prisma.admin.update({
             where: {
                 id: adminId,
             },
@@ -158,6 +164,11 @@ export const updateProfile =
                 updatedAt: true,
             },
         });
+
+        // Invalidate cached session so subsequent requests read the fresh profile
+        await cache.del(cacheKeys.adminSession(adminId));
+
+        return updatedAdmin;
     };
 
 /**
@@ -172,7 +183,7 @@ export const updateDairyInfo =
         data: any
     ) => {
 
-        return prisma.admin.update({
+        const updatedDairy = await prisma.admin.update({
             where: {
                 id: adminId,
             },
@@ -211,6 +222,11 @@ export const updateDairyInfo =
                     true,
             },
         });
+
+        // Invalidate cached session
+        await cache.del(cacheKeys.adminSession(adminId));
+
+        return updatedDairy;
     };
 
 /**
@@ -225,7 +241,7 @@ export const updateSettings =
         data: any
     ) => {
 
-        return prisma.admin.update({
+        const updatedSettings = await prisma.admin.update({
             where: {
                 id: adminId,
             },
@@ -258,6 +274,11 @@ export const updateSettings =
                     true,
             },
         });
+
+        // Invalidate cached session
+        await cache.del(cacheKeys.adminSession(adminId));
+
+        return updatedSettings;
     };
 
 /**
@@ -328,6 +349,9 @@ export const changePassword =
                     hashedPassword,
             },
         });
+
+        // Invalidate cached session
+        await cache.del(cacheKeys.adminSession(adminId));
 
         return null;
     };

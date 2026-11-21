@@ -45,4 +45,6 @@ export const cacheKeys = {
   date: string
 ) =>
   `today-milk-entries:${adminId}:${date}`,
+
+  adminSession: (adminId: string) => `session:admin:${adminId}`,
 };
