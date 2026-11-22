@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
 import { useAuthStore } from '../auth/useAuthStore';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export interface AdminProfile {
   id: string;
@@ -48,7 +50,10 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
   fetchProfile: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<AdminProfile>('/admin/profile');
+      const data = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.profile.current(),
+        queryFn: () => request<AdminProfile>('/admin/profile'),
+      });
       set({ profile: data, status: 'success' });
     } catch (err: any) {
       console.error('Failed to fetch admin profile:', err.message);
@@ -60,6 +65,8 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       const updated = await request<AdminProfile>('/admin/profile', 'PATCH', payload);
+      queryClient.setQueryData(QUERY_KEYS.profile.current(), updated);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.profile.current() });
       set({ profile: { ...(get().profile || {}), ...updated }, status: 'success' });
 
       // Synchronize with auth store user in memory

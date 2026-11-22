@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export interface FoodDealer {
   id: string;
@@ -117,7 +119,10 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   fetchDealers: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<FoodDealer[]>('/food-dealers/get-all-dealers');
+      const data = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.feed.dealers(),
+        queryFn: () => request<FoodDealer[]>('/food-dealers/get-all-dealers'),
+      });
       set({ dealers: data ?? [], status: 'success' });
     } catch (err: any) {
       console.error('Dealers fetch failed:', err.message);
@@ -129,7 +134,10 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   fetchPurchases: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<FoodPurchase[]>('/food-purchases/all-purchases');
+      const data = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.feed.purchases(),
+        queryFn: () => request<FoodPurchase[]>('/food-purchases/all-purchases'),
+      });
       set({ purchases: data ?? [], status: 'success' });
     } catch (err: any) {
       console.error('Purchases fetch failed:', err.message);
@@ -141,7 +149,10 @@ export const useFeedStore = create<FeedState>((set, get) => ({
   fetchSales: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<FoodSale[]>('/food-sales/get-all-sales');
+      const data = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.feed.sales(),
+        queryFn: () => request<FoodSale[]>('/food-sales/get-all-sales'),
+      });
       set({ sales: data ?? [], status: 'success' });
     } catch (err: any) {
       console.error('Sales fetch failed:', err.message);
@@ -160,6 +171,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         address: dealer.address ?? '',
         isActive: true,
       });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.dealers() });
       await get().fetchDealers();
       set({ status: 'success' });
       return true;
@@ -175,6 +187,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request(`/food-dealers/${id}`, 'PATCH', dealer);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.dealers() });
       await get().fetchDealers();
       set({ status: 'success' });
       return true;
@@ -189,6 +202,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request(`/food-dealers/${id}`, 'DELETE');
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.dealers() });
       await get().fetchDealers();
       set({ status: 'success' });
       return true;
@@ -211,6 +225,7 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         amountPaid: Number(purchase.amountPaid),
         purchaseDate: purchase.purchaseDate,
       });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.purchases() });
       await get().fetchPurchases();
       set({ status: 'success' });
       return true;
@@ -233,6 +248,8 @@ export const useFeedStore = create<FeedState>((set, get) => ({
         isCashPayment: sale.isCashPayment,
         saleDate: sale.saleDate,
       });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.sales() });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.feed.purchases() });
       await Promise.all([get().fetchSales(), get().fetchPurchases()]);
       set({ status: 'success' });
       return true;

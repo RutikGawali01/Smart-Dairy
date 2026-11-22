@@ -3,6 +3,8 @@ import { request } from '../../utils/api';
 import { calculateRate as calcRateUtil } from '../../utils/calculations/rateCalculations';
 import type { FatStep, SnfStep } from '../../utils/calculations/rateCalculations';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export type { FatStep, SnfStep };
 
@@ -76,8 +78,13 @@ export const useRateChartStore = create<RateChartState>((set, get) => ({
   fetchRateCharts: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<any>('/rate-chart');
-      const chartsList = Array.isArray(data) ? data : (data?.items ?? []);
+      const chartsList = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.rateCharts.all,
+        queryFn: async () => {
+          const data = await request<any>('/rate-chart');
+          return Array.isArray(data) ? data : (data?.items ?? []);
+        },
+      });
       set({ rateCharts: chartsList, status: 'success' });
     } catch (err: any) {
       console.error('Failed to fetch rate charts:', err.message);
@@ -90,6 +97,7 @@ export const useRateChartStore = create<RateChartState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request('/rate-chart/create', 'POST', payload);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.rateCharts.all });
       await get().fetchRateCharts();
       set({ status: 'success' });
       return true;
@@ -104,6 +112,7 @@ export const useRateChartStore = create<RateChartState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request(`/rate-chart/${id}`, 'DELETE');
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.rateCharts.all });
       set((s) => ({ rateCharts: s.rateCharts.filter((r) => r.id !== id), status: 'success' }));
       return true;
     } catch (err: any) {

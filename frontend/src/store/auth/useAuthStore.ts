@@ -10,6 +10,7 @@ import { useAdvanceStore } from '../advance/useAdvanceStore';
 import { useRateChartStore } from '../rate-chart/useRateChartStore';
 import { useDashboardStore } from '../dashboard/useDashboardStore';
 import { useProfileStore } from '../profile/useProfileStore';
+import { clearAppQueryCache } from '../../lib/queryClient';
 
 export interface Admin {
   id: string;
@@ -80,6 +81,7 @@ const initialAuthData = {
 };
 
 function resetAllBusinessStores() {
+  clearAppQueryCache();
   useCustomerStore.getState().reset();
   useMilkCollectionStore.getState().reset();
   useFeedStore.getState().reset();

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export type AdvanceStatus = 'ACTIVE' | 'PARTIALLY_RECOVERED' | 'CLOSED';
 export type TransactionType = 'ISSUED' | 'MANUAL_REPAYMENT' | 'AUTO_DEDUCTED_BILL';
@@ -153,6 +155,8 @@ export const useAdvanceStore = create<AdvanceState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request<Advance>('/advance', 'POST', data);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.advances.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
       await get().fetchAdvances();
       set({ status: 'success' });
       return true;
@@ -168,6 +172,8 @@ export const useAdvanceStore = create<AdvanceState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       await request<Advance>(`/advance/${advanceId}/repayments`, 'POST', data);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.advances.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
       await get().fetchAdvances();
       set({ status: 'success' });
       return true;

@@ -77,5 +77,13 @@
 - `POST /api/v1/auth/logout` — Revokes refresh token in Redis and clears both cookies.
 - `GET /api/v1/auth/me` — Authenticates session via access cookie, returns current admin user.
 
+---
+
+## 5. Related Architecture Documents
+
+- [State Management Architecture (Server State vs Client State)](State_Management_Architecture.md)
+- [Redis Session Caching Architecture](Redis_Session_Caching_Architecture.md)
+
+
 
 

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export interface Customer {
   id: string;
@@ -72,11 +74,16 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   fetchFarmers: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data = await request<Customer[]>('/customer/all-customers');
-      const normalized = (data ?? []).map(c => ({
-        ...c,
-        isActive: c.isActive !== false,
-      }));
+      const normalized = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.farmers.list(),
+        queryFn: async () => {
+          const data = await request<Customer[]>('/customer/all-customers');
+          return (data ?? []).map((c) => ({
+            ...c,
+            isActive: c.isActive !== false,
+          }));
+        },
+      });
       set({ farmers: normalized, status: 'success' });
     } catch (err: any) {
       console.error('Failed to fetch customers:', err.message);
@@ -110,6 +117,8 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
         isActive: res?.isActive !== false,
       };
 
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
       set({ farmers: [normalizedFarmer, ...farmers], status: 'success' });
       return { success: true, farmer: normalizedFarmer };
     } catch (err: any) {
@@ -141,6 +150,7 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       const { farmers } = get();
       const updatedFarmers = farmers.map(f => f.id === id ? { ...f, ...res, isActive: res.isActive ?? f.isActive ?? true } : f);
       
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
       set({ farmers: updatedFarmers, status: 'success' });
       return { success: true, farmer: res };
     } catch (err: any) {
@@ -163,6 +173,7 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
         }
         return f;
       });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
       set({ farmers: updatedFarmers, status: 'success' });
       return true;
     } catch (err: any) {

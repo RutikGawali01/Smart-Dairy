@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export interface SettlementRecord {
   id: string;
@@ -78,6 +80,9 @@ export const useBillingStore = create<BillingState>((set, get) => ({
     set({ status: 'loading', error: null });
     try {
       const record = await request<SettlementRecord>('/billing/settle', 'POST', payload);
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.billing.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.advances.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.farmers.all });
       set({
         settlements: [record, ...get().settlements],
         status: 'success',

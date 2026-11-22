@@ -24,3 +24,7 @@ backend/data/
 # Firebase private keys
 firebase-service-account.json
 backend/firebase-service-account.json
+# 
+
+
+docs

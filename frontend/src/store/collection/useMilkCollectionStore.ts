@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { request } from '../../utils/api';
 import type { StoreStatus } from '../utils/asyncHelper';
+import { queryClient } from '../../lib/queryClient';
+import { QUERY_KEYS } from '../../queries/keys';
 
 export interface MilkEntry {
   id: string;
@@ -88,8 +90,13 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
   fetchCollections: async () => {
     set({ status: 'loading', error: null });
     try {
-      const data: any[] = await request('/milk/today');
-      const mapped: MilkEntry[] = (data ?? []).map(mapRawMilkEntry);
+      const mapped = await queryClient.fetchQuery({
+        queryKey: QUERY_KEYS.milk.today(),
+        queryFn: async () => {
+          const data: any[] = await request('/milk/today');
+          return (data ?? []).map(mapRawMilkEntry);
+        },
+      });
       set({ collections: mapped, status: 'success' });
     } catch (err: any) {
       console.error('Failed to fetch milk entries:', err.message);
@@ -155,6 +162,8 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
         createdAt: res.createdAt,
       };
 
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
       set({ collections: [newEntry, ...get().collections], status: 'success' });
       return true;
     } catch (err: any) {
@@ -183,6 +192,8 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
       const res: any = await request(`/milk/${id}`, 'PATCH', payload);
       const updatedEntry = mapRawMilkEntry(res);
 
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
       set({ 
         collections: get().collections.map(c => c.id === id ? updatedEntry : c),
         history: get().history.map(c => c.id === id ? updatedEntry : c),
@@ -200,6 +211,8 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
     set({ status: 'loading', error: null });
     try {
       await request(`/milk/${id}`, 'DELETE');
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
       set({ collections: get().collections.filter((c) => c.id !== id), status: 'success' });
       return true;
     } catch (err: any) {

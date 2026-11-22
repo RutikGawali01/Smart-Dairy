@@ -1,17 +1,7 @@
 import React, { useState } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RateChartListPage } from './pages/RateChartListPage';
 import { CreateRateChartPage } from './pages/CreateRateChartPage';
 import { EditRateChartPage } from './pages/EditRateChartPage';
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      refetchOnWindowFocus: false,
-      retry: 1,
-    },
-  },
-});
 
 export type RateChartSubView = 'list' | 'create' | 'edit';
 
@@ -62,9 +52,5 @@ export const RateChartModuleContent: React.FC = () => {
 };
 
 export const RateChartModule: React.FC = () => {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <RateChartModuleContent />
-    </QueryClientProvider>
-  );
+  return <RateChartModuleContent />;
 };
