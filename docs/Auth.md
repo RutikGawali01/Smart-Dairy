@@ -83,6 +83,7 @@
 
 - [State Management Architecture (Server State vs Client State)](State_Management_Architecture.md)
 - [Redis Session Caching Architecture](Redis_Session_Caching_Architecture.md)
+- [CSRF Defense & Production Deployment Guide](CSRF_Defense_Deployment_Guide.md)
 
 
 

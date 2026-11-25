@@ -5,7 +5,6 @@ import {
   useAuthStore,
   useDashboardStore,
   useFarmerStore,
-  useRateChartStore,
   useMilkStore,
   useFeedStore,
   useAdvanceStore,
@@ -15,29 +14,30 @@ import {
 } from '../store';
 import type { Advance } from '../store';
 import type { MilkEntry } from '../store/collection/useMilkCollectionStore';
+import { Decimal } from 'decimal.js';
+import { RateChartModule } from '../modules/rateChart/RateChartModule';
+import { useLiveRateCalculator } from '../modules/rateChart/hooks/useLiveRateCalculator';
+import { CollectionCorrectionModal } from './CollectionCorrectionModal';
+import { CollectionReversalModal } from './CollectionReversalModal';
+import { CalculationSnapshotModal } from './CalculationSnapshotModal';
 import LanguageSelector from './LanguageSelector';
 import TableSkeleton from './TableSkeleton';
 import ReceiptModal, { type ReceiptType } from './ReceiptModal';
 import BulkImportModal from './BulkImportModal';
 import { exportMilkCollectionsCsv, exportFarmersCsv, exportSettlementsCsv } from '../utils/csvExport';
-import { RateChartModule } from '../modules/rateChart/RateChartModule';
-import { rateChartService, type CalculateLiveRateResponse } from '../modules/rateChart/services/rateChart.service';
 import {
   Milk,
   Users,
-  FileSpreadsheet,
   ShoppingBag,
   Coins,
   LayoutDashboard,
   LogOut,
   Home,
   Plus,
-  Trash2,
   AlertTriangle,
   CheckCircle,
   DollarSign,
   UserPlus,
-  Calculator,
   Info,
   HandCoins,
   History as HistoryIcon,
@@ -50,6 +50,8 @@ import {
   Printer,
   Upload,
   Download,
+  Calculator,
+  FileText,
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -70,17 +72,11 @@ export default function Dashboard() {
   const farmerStatus = useFarmerStore((state) => state.status);
   const farmerError = useFarmerStore((state) => state.error);
 
-  const rateCharts = useRateChartStore((state) => state.rateCharts);
-  const fetchRateCharts = useRateChartStore((state) => state.fetchRateCharts);
-  const rateError = useRateChartStore((state) => state.error);
-
   const collections = useMilkStore((state) => state.collections);
   const history = useMilkStore((state) => state.history);
   const fetchCollections = useMilkStore((state) => state.fetchCollections);
   const fetchHistory = useMilkStore((state) => state.fetchHistory);
   const addCollectionEntry = useMilkStore((state) => state.createCollectionEntry);
-  const deleteCollectionEntry = useMilkStore((state) => state.deleteCollectionEntry);
-  const updateCollectionEntry = useMilkStore((state) => state.updateCollectionEntry);
   const milkStatus = useMilkStore((state) => state.status);
   const milkError = useMilkStore((state) => state.error);
 
@@ -122,13 +118,13 @@ export default function Dashboard() {
   const isSettlingBill = billingStatus === 'loading';
   const billingError = useBillingStore((state) => state.error);
 
-  const fetchError = adminError || farmerError || rateError || milkError || feedError || advError || profileError || billingError;
+  const fetchError = adminError || farmerError || milkError || feedError || advError || profileError || billingError;
 
   // Responsive sidebar drawer state
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Internal routing in Dashboard
-  const [dbTab, setDbTab] = useState<'overview' | 'milk' | 'farmers' | 'rates' | 'feed' | 'billing' | 'advances' | 'settings'>('overview');
+  const [dbTab, setDbTab] = useState<'overview' | 'milk' | 'rates' | 'farmers' | 'feed' | 'billing' | 'advances' | 'settings'>('overview');
 
   // Initial core bootstrap
   useEffect(() => {
@@ -158,14 +154,10 @@ export default function Dashboard() {
         break;
       case 'milk':
         fetchFarmers();
-        fetchRateCharts();
         fetchCollections();
         break;
       case 'farmers':
         fetchFarmers();
-        break;
-      case 'rates':
-        fetchRateCharts();
         break;
       case 'feed':
         fetchDealers();
@@ -191,6 +183,11 @@ export default function Dashboard() {
   const [farmerModalOpen, setFarmerModalOpen] = useState(false);
   const [dealerModalOpen, setDealerModalOpen] = useState(false);
   const [purchaseModalOpen, setPurchaseModalOpen] = useState(false);
+
+  // Rate Chart & Historical Collection Modals
+  const [snapshotEntry, setSnapshotEntry] = useState<MilkEntry | null>(null);
+  const [correctionEntry, setCorrectionEntry] = useState<MilkEntry | null>(null);
+  const [reversalEntry, setReversalEntry] = useState<MilkEntry | null>(null);
 
   // Receipt Modal State
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
@@ -297,7 +294,6 @@ export default function Dashboard() {
   const [milkErrorMsg, setMilkErrorMsg] = useState('');
   const [milkStartDate, setMilkStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [milkEndDate, setMilkEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [editMilkId, setEditMilkId] = useState<string | null>(null);
 
   // 5. FEED SALE FORM STATE
   const [saleFarmerId, setSaleFarmerId] = useState('');
@@ -425,55 +421,30 @@ export default function Dashboard() {
     return matchesSearch && matchesStatus;
   });
 
-  const totalAdvanceIssued = advances.reduce((sum, a) => sum + Number(a.originalAmount), 0);
-  const totalRecoveredAmt = advances.reduce((sum, a) => sum + Number(a.recoveredAmount), 0);
-  const totalPendingBal = advances.reduce((sum, a) => sum + Number(a.pendingAmount), 0);
+  const totalAdvanceIssued = advances.reduce(
+    (sum, a) => sum.plus(new Decimal(a.originalAmount || 0)),
+    new Decimal(0)
+  ).toNumber();
+  const totalRecoveredAmt = advances.reduce(
+    (sum, a) => sum.plus(new Decimal(a.recoveredAmount || 0)),
+    new Decimal(0)
+  ).toNumber();
+  const totalPendingBal = advances.reduce(
+    (sum, a) => sum.plus(new Decimal(a.pendingAmount || 0)),
+    new Decimal(0)
+  ).toNumber();
 
   const foundFarmer = farmers.find(f => f.code === Number(selectedFarmerCode));
 
-  const [liveCalc, setLiveCalc] = useState<CalculateLiveRateResponse | null>(null);
-  const [isCalculatingRate, setIsCalculatingRate] = useState(false);
-  const [calcError, setCalcError] = useState<string | null>(null);
+  const liveCalc = useLiveRateCalculator({
+    milkType: (foundFarmer?.milkType as any) || 'COW',
+    fat: milkFat,
+    snf: milkSnf,
+    quantity: milkQty,
+  });
 
-  useEffect(() => {
-    if (!foundFarmer) {
-      setLiveCalc(null);
-      setCalcError(null);
-      return;
-    }
-    const qty = Number(milkQty) || 1;
-    const fat = Number(milkFat) || 0;
-    const snf = Number(milkSnf) || 0;
-
-    let isMounted = true;
-    setIsCalculatingRate(true);
-
-    rateChartService
-      .calculateRate({
-        milkType: foundFarmer.milkType,
-        fat,
-        snf,
-        quantity: qty,
-      })
-      .then((res) => {
-        if (isMounted) {
-          setLiveCalc(res);
-          setCalcError(null);
-          setIsCalculatingRate(false);
-        }
-      })
-      .catch((err) => {
-        if (isMounted) {
-          setCalcError(err.response?.data?.message || `No active rate chart configured for ${foundFarmer.milkType}`);
-          setLiveCalc(null);
-          setIsCalculatingRate(false);
-        }
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, [foundFarmer?.milkType, selectedFarmerCode, milkFat, milkSnf, milkQty]);
+  const liveRate = parseFloat(liveCalc.rate) || 0;
+  const liveTotalPayout = parseFloat(liveCalc.totalAmount) || 0;
 
   // Overview metrics — from DB dashboard endpoint
   const todayLiters = dashboardStats?.todayMilkCollection ?? 0;
@@ -484,15 +455,22 @@ export default function Dashboard() {
   // Backend `/milk/today` already filters for today's entries
   const todayCollections = collections;
 
-  // Billing (calculated from fetched history entries)
+  // Billing (calculated from fetched history entries, strictly excluding reversed collections)
   const targetBillingFarmer = farmers.find(f => f.id === billingFarmerId);
   const billingCollections = history.filter(c =>
+    !c.isReversed &&
     (!billingFarmerId || c.customerId === billingFarmerId) &&
     (!billingStartDate || c.date >= billingStartDate) &&
     (!billingEndDate || c.date <= billingEndDate)
   );
-  const billingTotalQty = billingCollections.reduce((sum, c) => sum + c.quantity, 0);
-  const billingTotalGross = billingCollections.reduce((sum, c) => sum + c.totalAmount, 0);
+  const billingTotalQty = billingCollections.reduce(
+    (sum, c) => sum.plus(new Decimal(c.quantity || 0)),
+    new Decimal(0)
+  ).toNumber();
+  const billingTotalGross = billingCollections.reduce(
+    (sum, c) => sum.plus(new Decimal(c.totalAmount || 0)),
+    new Decimal(0)
+  ).toNumber();
   const avgFat = billingCollections.length
     ? Number((billingCollections.reduce((sum, c) => sum + c.fat, 0) / billingCollections.length).toFixed(2))
     : 0;
@@ -501,7 +479,11 @@ export default function Dashboard() {
     : 0;
   const maxBillingDeductible = Math.min(billingTotalGross, customerSummary?.summary?.totalPending || 0);
   const billingDeductionAmt = Math.min(maxBillingDeductible, Math.max(0, Number(billingAdvanceDeduction) || 0));
-  const billingNetPayable = Number(Math.max(0, billingTotalGross - billingDeductionAmt).toFixed(2));
+  const billingNetPayable = new Decimal(billingTotalGross)
+    .minus(new Decimal(billingDeductionAmt))
+    .clamp(0, Infinity)
+    .toDecimalPlaces(2)
+    .toNumber();
 
   const filteredFarmers = farmers.filter(f =>
     f.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -512,10 +494,22 @@ export default function Dashboard() {
   const todayDateStr = new Date().toISOString().split('T')[0];
   const displayCollections = (milkStartDate === todayDateStr && milkEndDate === todayDateStr) ? collections : history;
 
-  const milkTotalLitres = displayCollections.reduce((sum, c) => sum + c.quantity, 0);
-  const milkTotalAmount = displayCollections.reduce((sum, c) => sum + c.totalAmount, 0);
-  const milkAvgFat = displayCollections.length ? (displayCollections.reduce((sum, c) => sum + c.fat, 0) / displayCollections.length).toFixed(1) : '0.0';
-  const milkAvgSnf = displayCollections.length ? (displayCollections.reduce((sum, c) => sum + c.snf, 0) / displayCollections.length).toFixed(1) : '0.0';
+  // Filter out reversed entries from volume/amount totals & averages
+  const activeDisplayCollections = displayCollections.filter(c => !c.isReversed);
+  const milkTotalLitres = activeDisplayCollections.reduce(
+    (sum, c) => sum.plus(new Decimal(c.quantity || 0)),
+    new Decimal(0)
+  ).toNumber();
+  const milkTotalAmount = activeDisplayCollections.reduce(
+    (sum, c) => sum.plus(new Decimal(c.totalAmount || 0)),
+    new Decimal(0)
+  ).toNumber();
+  const milkAvgFat = activeDisplayCollections.length
+    ? (activeDisplayCollections.reduce((sum, c) => sum + c.fat, 0) / activeDisplayCollections.length).toFixed(1)
+    : '0.0';
+  const milkAvgSnf = activeDisplayCollections.length
+    ? (activeDisplayCollections.reduce((sum, c) => sum + c.snf, 0) / activeDisplayCollections.length).toFixed(1)
+    : '0.0';
 
   const availablePurchases = purchases.filter(p => p.remainingQuantity > 0);
   const outOfStockPurchases = purchases.filter(p => p.remainingQuantity <= 0);
@@ -563,8 +557,8 @@ export default function Dashboard() {
   const navItems = [
     { id: 'overview', label: t('dashboard', 'navOverview'), icon: LayoutDashboard },
     { id: 'milk', label: t('dashboard', 'navMilkRegistry'), icon: Milk },
+    { id: 'rates', label: t('dashboard', 'navRates') || 'Rate Charts', icon: Calculator },
     { id: 'farmers', label: t('dashboard', 'navFarmers'), icon: Users },
-    { id: 'rates', label: t('dashboard', 'navRates'), icon: FileSpreadsheet },
     { id: 'feed', label: t('dashboard', 'navFeeds'), icon: ShoppingBag },
     { id: 'advances', label: t('dashboard', 'navAdvances'), icon: HandCoins },
     { id: 'billing', label: t('dashboard', 'navBilling'), icon: Coins },
@@ -757,34 +751,30 @@ export default function Dashboard() {
       setMilkErrorMsg(t('dashboard', 'invalidPositiveQty'));
       return;
     }
-    if (isNaN(fat) || fat < 0) {
-      setMilkErrorMsg(t('dashboard', 'invalidPositiveFat'));
-      return;
-    }
-    if (isNaN(snf) || snf < 0) {
-      setMilkErrorMsg(t('dashboard', 'invalidPositiveSnf'));
+    if (isNaN(fat) || fat <= 0) {
+      setMilkErrorMsg(t('dashboard', 'invalidPositiveFat') || 'FAT must be greater than 0');
       return;
     }
 
-    // Local check against existing collections in memory before triggering API (ONLY IF CREATING)
-    if (!editMilkId) {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const shiftExists = collections.some(
-        (c) => c.customerId === foundFarmer.id && c.shift === milkShift && (c.date === todayStr || !c.date)
-      );
+    if (liveCalc.isUnavailable || liveCalc.error || !liveCalc.result) {
+      setMilkErrorMsg(liveCalc.error || 'No active Rate Chart found for this milk type and date. Please activate a rate chart first.');
+      return;
+    }
 
-      if (shiftExists) {
-        setMilkSuccessMsg('');
-        setMilkErrorMsg(`Entry for ${milkShift} shift already exists on this date for ${foundFarmer.name}.`);
-        return;
-      }
+    // Local check against existing collections in memory before triggering API
+    const todayStr = new Date().toISOString().split('T')[0];
+    const shiftExists = collections.some(
+      (c) => !c.isReversed && c.customerId === foundFarmer.id && c.shift === milkShift && (c.date === todayStr || !c.date)
+    );
+
+    if (shiftExists) {
+      setMilkSuccessMsg('');
+      setMilkErrorMsg(`Entry for ${milkShift} shift already exists on this date for ${foundFarmer.name}.`);
+      return;
     }
 
     setIsSubmittingMilk(true);
     try {
-      const finalRate = liveCalc?.rate ?? 0;
-      const finalTotal = liveCalc ? liveCalc.amount : Number((qty * finalRate).toFixed(2));
-
       const payload = {
         customerCode: foundFarmer.code,
         customerName: foundFarmer.name,
@@ -794,42 +784,23 @@ export default function Dashboard() {
         fat: fat || 0,
         snf: snf || 0,
         shift: milkShift,
-        rate: finalRate,
-        totalAmount: finalTotal,
-        rateChartId: liveCalc?.chartId,
       };
 
-      let success;
-      if (editMilkId) {
-        success = await updateCollectionEntry(editMilkId, payload);
-      } else {
-        success = await addCollectionEntry(payload);
-      }
+      const success = await addCollectionEntry(payload);
 
       if (success) {
         setMilkErrorMsg('');
-        setMilkSuccessMsg(`Entry ${editMilkId ? 'updated' : 'saved'} for ${foundFarmer.name}! Rate: ₹${finalRate.toFixed(2)}/L, Total: ₹${finalTotal.toFixed(2)}`);
+        setMilkSuccessMsg(`Entry saved for ${foundFarmer.name}! Rate: ₹${liveCalc.rate}/L, Total: ₹${liveCalc.totalAmount}`);
         setMilkQty(''); setMilkFat(''); setMilkSnf('');
-        if (editMilkId) setEditMilkId(null);
         fetchDashboard();
       } else {
         const storeErr = useMilkStore.getState().error;
         setMilkSuccessMsg('');
-        setMilkErrorMsg(storeErr || `Error ${editMilkId ? 'updating' : 'saving'} entry.`);
+        setMilkErrorMsg(storeErr || `Error saving entry.`);
       }
     } finally {
       setIsSubmittingMilk(false);
     }
-  };
-
-  const handleEditMilkClick = (c: MilkEntry) => {
-    setEditMilkId(c.id);
-    setSelectedFarmerCode(c.customerCode.toString());
-    setMilkQty(c.quantity.toString());
-    setMilkFat(c.fat.toString());
-    setMilkSnf(c.snf.toString());
-    setMilkShift(c.shift);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleFeedSaleSubmit = async (e: React.FormEvent) => {
@@ -848,11 +819,6 @@ export default function Dashboard() {
     if (success) {
       setSaleFarmerId(''); setSalePurchaseId(''); setSaleQty('1');
     }
-  };
-
-  const handleBillDelete = async (id: string) => {
-    await deleteCollectionEntry(id);
-    fetchDashboard();
   };
 
   const handleBillSettlement = async () => {
@@ -1103,8 +1069,8 @@ export default function Dashboard() {
               <h2 className="text-xl sm:text-2xl font-bold font-display text-[#091e42]">
                 {dbTab === 'overview' && t('dashboard', 'navOverview')}
                 {dbTab === 'milk' && t('dashboard', 'navMilkRegistry')}
+                {dbTab === 'rates' && (t('dashboard', 'navRates') || 'Rate Charts')}
                 {dbTab === 'farmers' && t('dashboard', 'navFarmers')}
-                {dbTab === 'rates' && t('dashboard', 'navRates')}
                 {dbTab === 'feed' && t('dashboard', 'navFeeds')}
                 {dbTab === 'advances' && t('dashboard', 'navAdvances')}
                 {dbTab === 'billing' && t('dashboard', 'navBilling')}
@@ -1187,12 +1153,12 @@ export default function Dashboard() {
 
               <div className="light-panel p-5 rounded-xl flex items-center justify-between">
                 <div>
-                  <span className="text-xs text-gray-500 block font-semibold uppercase tracking-wider">{t('dashboard', 'rateChartsCount')}</span>
-                  <span className="text-2xl font-black text-[#091e42] mt-1 block">{rateCharts.filter(r => r.isActive).length} {t('dashboard', 'active')}</span>
-                  <span className="text-[10px] text-gray-400">{rateCharts.length} total in DB</span>
+                  <span className="text-xs text-gray-500 block font-semibold uppercase tracking-wider">{t('dashboard', 'todaysMilkCollections')}</span>
+                  <span className="text-2xl font-black text-[#091e42] mt-1 block">{todayCollections.length}</span>
+                  <span className="text-[10px] text-gray-400">{t('dashboard', 'liveFromDb')}</span>
                 </div>
                 <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-600">
-                  <FileSpreadsheet className="w-5 h-5" />
+                  <Milk className="w-5 h-5" />
                 </div>
               </div>
 
@@ -1245,9 +1211,23 @@ export default function Dashboard() {
                       </thead>
                       <tbody className="divide-y divide-gray-200 text-gray-700">
                         {todayCollections.map((c) => (
-                          <tr key={c.id} className="hover:bg-gray-50">
+                          <tr key={c.id} className={`hover:bg-gray-50 transition-colors ${c.isReversed ? 'bg-red-50/40 text-gray-400 opacity-60' : ''}`}>
                             <td className="py-2.5 font-bold text-[#0052cc]">{c.customerCode}</td>
-                            <td className="py-2.5 font-semibold text-[#091e42]">{c.customerName}</td>
+                            <td className="py-2.5 font-semibold text-[#091e42]">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={c.isReversed ? 'line-through text-gray-400' : ''}>{c.customerName}</span>
+                                {c.isReversed && (
+                                  <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[9px] font-black rounded uppercase">
+                                    Reversed
+                                  </span>
+                                )}
+                                {c.isCorrected && !c.isReversed && (
+                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded uppercase">
+                                    Corrected
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td className="py-2.5">
                               <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${c.shift === 'MORNING' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
                                 {c.shift === 'MORNING' ? t('dashboard', 'morning') : t('dashboard', 'evening')}
@@ -1256,7 +1236,11 @@ export default function Dashboard() {
                             <td className="py-2.5 font-mono">{c.quantity}</td>
                             <td className="py-2.5 font-mono text-gray-500">{c.fat}% / {c.snf}%</td>
                             <td className="py-2.5 text-right font-mono font-medium">₹{c.rate.toFixed(2)}</td>
-                            <td className="py-2.5 text-right font-mono font-bold text-[#091e42]">₹{c.totalAmount.toFixed(2)}</td>
+                            <td className="py-2.5 text-right font-mono font-bold text-[#091e42]">
+                              <span className={c.isReversed ? 'line-through text-red-700/60' : ''}>
+                                ₹{c.totalAmount.toFixed(2)}
+                              </span>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1384,106 +1368,57 @@ export default function Dashboard() {
                         type="number" step={step} min="0" value={val}
                         onChange={(e) => setter(e.target.value)}
                         placeholder={ph}
-                        className="mt-1 w-full light-input rounded-lg text-xs py-1.5 px-2 text-center"
-                        required
+                        className="mt-1 w-full light-input rounded-lg text-xs py-1.5 px-2 text-center font-mono"
+                        required={label !== t('dashboard', 'snfLabel')}
                       />
                     </div>
                   ))}
                 </div>
 
                 {foundFarmer && (
-                  <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm space-y-3">
-                    <div className="flex items-center justify-between border-b border-gray-100 pb-2">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#091e42]">
-                        <Calculator className="w-4 h-4 text-[#0052cc]" />
-                        <span>{liveCalc?.chartName || 'Active Rate Chart'}</span>
+                  <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-xs space-y-3">
+                    <div className="bg-[#deebff] border border-blue-200 rounded-lg p-3 text-center">
+                      <div className="flex items-center justify-between text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                        <span>Rate / Litre</span>
+                        {liveCalc.isLoading ? (
+                          <span className="text-[#0052cc] animate-pulse">Calculating...</span>
+                        ) : liveCalc.isUnavailable ? (
+                          <span className="text-red-600">No Active Chart</span>
+                        ) : (
+                          <span className="text-[#0052cc]">{liveCalc.chartName} ({liveCalc.method})</span>
+                        )}
                       </div>
-                      {isCalculatingRate && (
-                        <span className="animate-spin w-3.5 h-3.5 border-2 border-[#0052cc] border-t-transparent rounded-full" />
+                      <div className="flex items-baseline justify-center gap-1">
+                        <span className="text-2xl font-black text-[#0052cc]">
+                          ₹{liveRate.toFixed(2)}
+                        </span>
+                        <span className="text-xs text-gray-600 font-medium">/ L</span>
+                      </div>
+
+                      {liveCalc.formulaDescription && (
+                        <p className="text-[10px] text-blue-700 font-mono mt-1">
+                          {liveCalc.formulaDescription}
+                        </p>
                       )}
+
+                      <div className="mt-2 pt-2 border-t border-blue-200/80 flex justify-between items-center text-xs">
+                        <span className="text-gray-600">Total Payout ({milkQty || 0} L):</span>
+                        <span className="font-extrabold text-[#091e42] text-sm">
+                          ₹{liveTotalPayout.toFixed(2)}
+                        </span>
+                      </div>
                     </div>
-
-                    {calcError ? (
-                      <div className="p-2.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-                        {calcError}
-                      </div>
-                    ) : liveCalc ? (
-                      <div className="space-y-2 text-xs">
-                        <div className="bg-[#deebff] border border-blue-200 rounded-lg p-3 text-center">
-                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block mb-0.5">
-                            Calculated Rate / Litre
-                          </span>
-                          <div className="flex items-baseline justify-center gap-1">
-                            <span className="text-2xl font-black text-[#0052cc]">
-                              ₹{liveCalc.rate.toFixed(2)}
-                            </span>
-                            <span className="text-xs text-gray-600 font-medium">/ L</span>
-                          </div>
-
-                          <div className="mt-2 pt-2 border-t border-blue-200/80 flex justify-between items-center text-xs">
-                            <span className="text-gray-600">Total Payout ({milkQty || 1} L):</span>
-                            <span className="font-extrabold text-[#091e42] text-sm">
-                              ₹{liveCalc.amount.toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Breakdown Rows */}
-                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-2.5 space-y-1.5 text-[11px] text-gray-600">
-                          <div className="flex justify-between">
-                            <span>Base Rate:</span>
-                            <span className="font-semibold text-gray-800">₹{liveCalc.baseRate.toFixed(2)}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>FAT Adjustment:</span>
-                            <span className={`font-semibold ${liveCalc.fatAdjustment > 0 ? 'text-green-700' : liveCalc.fatAdjustment < 0 ? 'text-red-600' : 'text-gray-700'}`}>
-                              {liveCalc.fatAdjustment >= 0 ? '+' : ''}₹{liveCalc.fatAdjustment.toFixed(2)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span>SNF Adjustment:</span>
-                            <span className={`font-semibold ${liveCalc.snfAdjustment > 0 ? 'text-blue-700' : liveCalc.snfAdjustment < 0 ? 'text-red-600' : 'text-gray-700'}`}>
-                              {liveCalc.snfAdjustment >= 0 ? '+' : ''}₹{liveCalc.snfAdjustment.toFixed(2)}
-                            </span>
-                          </div>
-                          {liveCalc.bonus > 0 && (
-                            <div className="flex justify-between text-green-700 font-bold">
-                              <span>Bonus Premium:</span>
-                              <span>+₹{liveCalc.bonus.toFixed(2)}</span>
-                            </div>
-                          )}
-                          {liveCalc.penalty > 0 && (
-                            <div className="flex justify-between text-red-600 font-bold">
-                              <span>Penalty Deduction:</span>
-                              <span>-₹{liveCalc.penalty.toFixed(2)}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
                   </div>
                 )}
 
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    disabled={isSubmittingMilk}
+                    disabled={isSubmittingMilk || liveCalc.isLoading || liveCalc.isUnavailable || liveRate <= 0}
                     className="w-full bg-[#0052cc] hover:bg-[#0747a6] disabled:bg-blue-300 text-white font-bold text-xs py-2.5 rounded-lg transition shadow-md cursor-pointer flex items-center justify-center gap-2"
                   >
-                    {isSubmittingMilk ? 'Saving Entry...' : (editMilkId ? 'Update Entry' : t('dashboard', 'saveMilkCollection'))}
+                    {isSubmittingMilk ? 'Saving Entry...' : t('dashboard', 'saveMilkCollection')}
                   </button>
-                  {editMilkId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditMilkId(null);
-                        setMilkQty(''); setMilkFat(''); setMilkSnf('');
-                      }}
-                      className="w-1/3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs py-2.5 rounded-lg transition cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  )}
                 </div>
               </form>
             </div>
@@ -1568,9 +1503,23 @@ export default function Dashboard() {
                         <td colSpan={8} className="py-8 text-center text-gray-400">{t('dashboard', 'noEntriesToday')}</td>
                       </tr>
                     ) : displayCollections.map((c) => (
-                      <tr key={c.id} className="hover:bg-gray-50">
+                      <tr key={c.id} className={`hover:bg-gray-50 transition-colors ${c.isReversed ? 'bg-red-50/40 text-gray-400 opacity-60' : ''}`}>
                         <td className="py-2.5 font-bold text-[#0052cc]">{c.customerCode}</td>
-                        <td className="py-2.5 font-semibold text-[#091e42]">{c.customerName}</td>
+                        <td className="py-2.5 font-semibold text-[#091e42]">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={c.isReversed ? 'line-through text-gray-400' : ''}>{c.customerName}</span>
+                            {c.isReversed && (
+                              <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[9px] font-black rounded uppercase">
+                                Reversed
+                              </span>
+                            )}
+                            {c.isCorrected && !c.isReversed && (
+                              <span className="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-black rounded uppercase">
+                                Corrected
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-2.5">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${c.shift === 'MORNING' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>
                             {c.shift === 'MORNING' ? t('dashboard', 'morning') : t('dashboard', 'evening')}
@@ -1579,16 +1528,42 @@ export default function Dashboard() {
                         <td className="py-2.5 font-mono">{c.quantity}</td>
                         <td className="py-2.5 font-mono text-gray-500">{c.fat}% / {c.snf}%</td>
                         <td className="py-2.5 text-right font-mono font-medium">₹{c.rate.toFixed(2)}</td>
-                        <td className="py-2.5 text-right font-mono font-bold text-[#091e42]">₹{c.totalAmount.toFixed(2)}</td>
-                        <td className="py-2.5 text-right space-x-1">
-                          <button onClick={() => openMilkReceipt(c)} title="Print Milk Slip" className="p-1 text-gray-500 hover:text-[#0052cc] hover:bg-blue-50 rounded transition cursor-pointer">
+                        <td className="py-2.5 text-right font-mono font-bold text-[#091e42]">
+                          <span className={c.isReversed ? 'line-through text-red-700/60' : ''}>
+                            ₹{c.totalAmount.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="py-2.5 text-right space-x-1 whitespace-nowrap">
+                          <button
+                            onClick={() => setSnapshotEntry(c)}
+                            title="View Calculation Snapshot"
+                            className="p-1 text-gray-500 hover:text-[#0052cc] hover:bg-blue-50 rounded transition cursor-pointer"
+                          >
+                            <FileText className="w-3.5 h-3.5 inline" />
+                          </button>
+                          <button
+                            onClick={() => openMilkReceipt(c)}
+                            title="Print Milk Slip"
+                            disabled={c.isReversed}
+                            className="p-1 text-gray-500 hover:text-[#0052cc] hover:bg-blue-50 disabled:opacity-30 rounded transition cursor-pointer"
+                          >
                             <Printer className="w-3.5 h-3.5 inline" />
                           </button>
-                          <button onClick={() => handleEditMilkClick(c)} className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded transition cursor-pointer font-bold text-[10px]">
-                            EDIT
+                          <button
+                            onClick={() => setCorrectionEntry(c)}
+                            disabled={c.isReversed}
+                            title="Audited Correction"
+                            className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 disabled:opacity-30 rounded transition cursor-pointer font-bold text-[10px]"
+                          >
+                            CORRECT
                           </button>
-                          <button onClick={() => handleBillDelete(c.id)} className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded transition cursor-pointer">
-                            <Trash2 className="w-3.5 h-3.5 inline" />
+                          <button
+                            onClick={() => setReversalEntry(c)}
+                            disabled={c.isReversed}
+                            title="Audited Reversal"
+                            className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 disabled:opacity-30 rounded transition cursor-pointer font-bold text-[10px]"
+                          >
+                            REVERSE
                           </button>
                         </td>
                       </tr>
@@ -1696,14 +1671,7 @@ export default function Dashboard() {
         )}
 
         {/* ══════════════════════════════════════════════════════════════
-            4. RATE CHARTS (Production Grade Module)
-        ══════════════════════════════════════════════════════════════ */}
-        {dbTab === 'rates' && (
-          <RateChartModule />
-        )}
-
-        {/* ══════════════════════════════════════════════════════════════
-            5. FEED SALES & INVENTORY
+            4. FEED SALES & INVENTORY
         ══════════════════════════════════════════════════════════════ */}
         {dbTab === 'feed' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -2464,6 +2432,11 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* ══════════════════════════════════════════════════════════════
+            RATE CHARTS MANAGEMENT PANEL
+        ══════════════════════════════════════════════════════════════ */}
+        {dbTab === 'rates' && <RateChartModule />}
+
         </div>
 
       {/* ══════════════════════════════════════════════════════════════
@@ -2894,6 +2867,33 @@ export default function Dashboard() {
         type={receiptType}
         dairyProfile={profile || user}
         data={receiptData}
+      />
+
+      {/* ══════════════════════════════════════════════════════════════
+          RATE CHART & HISTORICAL COLLECTION MODALS
+      ══════════════════════════════════════════════════════════════ */}
+      <CalculationSnapshotModal
+        isOpen={Boolean(snapshotEntry)}
+        entry={snapshotEntry}
+        onClose={() => setSnapshotEntry(null)}
+      />
+      <CollectionCorrectionModal
+        isOpen={Boolean(correctionEntry)}
+        entry={correctionEntry}
+        onClose={() => setCorrectionEntry(null)}
+        onSuccess={() => {
+          fetchCollections();
+          fetchDashboard();
+        }}
+      />
+      <CollectionReversalModal
+        isOpen={Boolean(reversalEntry)}
+        entry={reversalEntry}
+        onClose={() => setReversalEntry(null)}
+        onSuccess={() => {
+          fetchCollections();
+          fetchDashboard();
+        }}
       />
 
     </div>

@@ -7,7 +7,6 @@ import { useCustomerStore } from '../customer/useCustomerStore';
 import { useMilkCollectionStore } from '../collection/useMilkCollectionStore';
 import { useFeedStore } from '../feed/useFeedStore';
 import { useAdvanceStore } from '../advance/useAdvanceStore';
-import { useRateChartStore } from '../rate-chart/useRateChartStore';
 import { useDashboardStore } from '../dashboard/useDashboardStore';
 import { useProfileStore } from '../profile/useProfileStore';
 import { clearAppQueryCache } from '../../lib/queryClient';
@@ -86,7 +85,6 @@ function resetAllBusinessStores() {
   useMilkCollectionStore.getState().reset();
   useFeedStore.getState().reset();
   useAdvanceStore.getState().reset();
-  useRateChartStore.getState().reset();
   useDashboardStore.getState().reset();
   useProfileStore.getState().reset();
 }

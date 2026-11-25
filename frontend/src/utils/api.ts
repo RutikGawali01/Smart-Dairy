@@ -36,9 +36,12 @@ export async function request<T = any>(
   body?: any,
   isRetry = false
 ): Promise<T> {
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-  };
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+  const headers: Record<string, string> = {};
+
+  if (!isFormData) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   // Optional in-memory / fallback token
   const token = localStorage.getItem('token');
@@ -53,7 +56,7 @@ export async function request<T = any>(
   };
 
   if (body) {
-    config.body = JSON.stringify(body);
+    config.body = isFormData ? body : JSON.stringify(body);
   }
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, config);
@@ -76,7 +79,11 @@ export async function request<T = any>(
       endpoint.startsWith('/auth/login') ||
       endpoint.startsWith('/auth/register');
 
-    if (!isRetry && !isAuthEndpoint) {
+    if (isAuthEndpoint) {
+      throw new Error(json?.message || 'Invalid credentials');
+    }
+
+    if (!isRetry) {
       const refreshed = await attemptTokenRefresh();
       if (refreshed) {
         return request<T>(endpoint, method, body, true);
@@ -90,8 +97,14 @@ export async function request<T = any>(
   }
 
   if (!response.ok) {
-    throw new Error(json?.message || `Request failed with status ${response.status}`);
+    const error: any = new Error(json?.message || `Request failed with status ${response.status}`);
+    error.status = response.status;
+    error.statusCode = response.status;
+    error.code = json?.code;
+    error.errors = json?.errors;
+    error.data = json?.data;
+    throw error;
   }
 
-  return json?.data;
+  return json?.data !== undefined ? json.data : json;
 }

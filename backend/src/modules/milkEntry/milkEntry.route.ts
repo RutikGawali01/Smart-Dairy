@@ -11,6 +11,8 @@ import {
     addMilkEntry,
     getMilkEntryById,
     updateMilkEntry,
+    correctMilkEntry,
+    reverseMilkEntry,
     deleteMilkEntry,
     getTodayMilkEntries,
     getMilkEntriesByDate,
@@ -20,6 +22,8 @@ import {
 import {
     addMilkEntrySchema,
     updateMilkEntrySchema,
+    correctMilkEntrySchema,
+    reverseMilkEntrySchema,
 } from "./milkEntry.schema.js";
 
 const router = Router();
@@ -112,6 +116,42 @@ router.patch(
     }),
 
     updateMilkEntry
+);
+
+/**
+ * =====================================================
+ * HISTORICAL CORRECTION (Phase 2D Audited Endpoint)
+ * =====================================================
+ */
+router.post(
+    "/:id/correct",
+
+    authMiddleware,
+
+    validate({
+        body:
+            correctMilkEntrySchema,
+    }),
+
+    correctMilkEntry
+);
+
+/**
+ * =====================================================
+ * REVERSAL (Phase 2D Audited Endpoint)
+ * =====================================================
+ */
+router.post(
+    "/:id/reverse",
+
+    authMiddleware,
+
+    validate({
+        body:
+            reverseMilkEntrySchema,
+    }),
+
+    reverseMilkEntry
 );
 
 /**

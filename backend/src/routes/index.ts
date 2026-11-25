@@ -4,12 +4,12 @@ import authRoutes from "../modules/auth/auth.routes.js";
 import adminRoutes from "../modules/Admin/admin.routes.js";
 import customerRoutes from "../modules/customer/customer.route.js";
 import milkEntryRoutes from "../modules/milkEntry/milkEntry.route.js";
-import rateChartRoutes from "../modules/rateChart/chart.routes.js";
 import foodDealerRoutes from "../modules/foodDealers/foodDealer.routes.js";
 import foodPurchaseRoutes from "../modules/foodPurchases/foodPurchase.routes.js";
 import foodSaleRoutes from "../modules/foodSales/foodSale.routes.js";
 import advanceRoutes from "../modules/Advance/advance.routes.js";
 import billingRoutes from "../modules/billing/billing.routes.js";
+import rateChartRoutes from "../modules/rateChart/chart.routes.js";
 
 const router = Router();
 
@@ -35,14 +35,6 @@ router.use(
 router.use(
     "/milk",
     milkEntryRoutes
-);
-router.use(
-    "/rate-charts",
-    rateChartRoutes
-);
-router.use(
-    "/rate-chart",
-    rateChartRoutes
 );
 
 router.use( 
@@ -71,6 +63,11 @@ router.use(
 router.use(
     "/billing",
     billingRoutes
+);
+
+router.use(
+    "/rate-charts",
+    rateChartRoutes
 );
 
 export default router;

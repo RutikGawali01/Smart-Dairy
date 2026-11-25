@@ -1,50 +1,97 @@
-// ================================
-// chart.routes.ts
-// ================================
-
-import { Router } from "express";
+import { Router, Request, Response } from "express";
 import authMiddleware from "../../middleware/auth.middleware.js";
-import { validate } from "../../middleware/validate.middleware.js";
+import upload from "../../config/multer.js";
+import asyncHandler from "../../utils/asyncHandler.js";
+import ApiResponse from "../../utils/ApiResponse.js";
+import { RateCalculationService } from "./services/rateCalculation.service.js";
+import { previewRateSchema } from "./chart.schema.js";
 import {
-  createChartSchema,
-  updateChartSchema,
-  chartIdSchema,
-  getChartsQuerySchema,
-  activeChartQuerySchema,
-  previewChartSchema,
-  validateExcelSchema,
-  calculateRateSchema,
-} from "./chart.schema.js";
-import { RateChartController } from "./chart.controller.js";
+  createChart,
+  listCharts,
+  getChartDetails,
+  updateChart,
+  deleteChart,
+  previewRate,
+  activateChart,
+  deactivateChart,
+  validateAndStageMatrix,
+  confirmImportMatrix,
+  downloadTemplate,
+  getChartHistory,
+} from "./chart.controller.js";
 
 const router = Router();
 
-// Apply auth middleware to all rate chart routes
+// Enforce authentication for all rate-chart endpoints
 router.use(authMiddleware);
 
 /**
- * RESTful CRUD & Query Endpoints
+ * Download Standard Excel Rate Matrix Template
+ * GET /rate-charts/template
  */
-router.post("/", validate(createChartSchema), RateChartController.createRateChart);
-router.get("/", validate(getChartsQuerySchema), RateChartController.getAllCharts);
-router.get("/active", validate(activeChartQuerySchema), RateChartController.getActiveChart);
-router.get("/:id", validate(chartIdSchema), RateChartController.getSingleChart);
-router.patch("/:id", validate(chartIdSchema), validate(updateChartSchema), RateChartController.updateChart);
-router.delete("/:id", validate(chartIdSchema), RateChartController.deleteChart);
+router.get("/template", downloadTemplate);
 
 /**
- * Additional Business Routes
+ * Common quick rate calculation for Milk Collection desk
+ * POST /rate-charts/calculate
  */
-router.post("/calculate", validate(calculateRateSchema), RateChartController.calculateRate);
-router.post("/:id/activate", validate(chartIdSchema), RateChartController.activateChart);
-router.post("/:id/clone", validate(chartIdSchema), RateChartController.cloneChart);
-router.post("/preview", validate(previewChartSchema), RateChartController.previewChart);
-router.post("/validate-excel", validate(validateExcelSchema), RateChartController.validateExcel);
+router.post(
+  "/calculate",
+  asyncHandler(async (req: Request, res: Response) => {
+    const adminId = req.user.id;
+    const validated = previewRateSchema.parse(req.body);
+    const milkType = req.body.milkType;
+
+    const result = await RateCalculationService.calculateMilkRate({
+      dairyId: adminId,
+      milkType,
+      fat: validated.fat,
+      snf: validated.snf,
+      quantity: validated.quantity,
+      collectionDate: validated.collectionDate,
+    });
+
+    res.status(200).json(new ApiResponse(200, "Calculated milk rate", result));
+  })
+);
 
 /**
- * Backward-Compatibility Aliases
+ * 1. POST /rate-charts - Create a draft chart
+ * 2. GET /rate-charts - List charts with pagination & filters
  */
-router.post("/create", validate(createChartSchema), RateChartController.createRateChart);
-router.get("/all", validate(getChartsQuerySchema), RateChartController.getAllCharts);
+router.route("/")
+  .post(createChart)
+  .get(listCharts);
+
+/**
+ * Two-Step Excel Matrix Import Workflow:
+ * Step 1: POST /rate-charts/:id/import/validate (Upload, Validate & Stage in memory/Redis preview)
+ * Step 2: POST /rate-charts/:id/import/confirm  (Owner explicitly confirms to commit staged matrix)
+ */
+router.post("/:id/import/validate", upload.single("file"), validateAndStageMatrix);
+router.post("/:id/import/preview", upload.single("file"), validateAndStageMatrix);
+router.post("/:id/import/confirm", confirmImportMatrix);
+
+/**
+ * 6. POST /rate-charts/:id/preview - Preview calculated rates
+ * 7. POST /rate-charts/:id/activate - Activate chart
+ * 8. POST /rate-charts/:id/deactivate - Deactivate chart
+ * 11. GET /rate-charts/:id/history - View chart versions/history
+ */
+router.post("/:id/preview", previewRate);
+router.post("/:id/activate", activateChart);
+router.post("/:id/deactivate", deactivateChart);
+router.get("/:id/history", getChartHistory);
+
+/**
+ * 3. GET /rate-charts/:id - Get chart details
+ * 4. PUT /rate-charts/:id - Update a draft chart
+ * 5. DELETE /rate-charts/:id - Delete an eligible draft chart
+ */
+router.route("/:id")
+  .get(getChartDetails)
+  .put(updateChart)
+  .delete(deleteChart);
 
 export default router;
+

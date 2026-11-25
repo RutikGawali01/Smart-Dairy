@@ -4,6 +4,19 @@ import type { StoreStatus } from '../utils/asyncHelper';
 import { queryClient } from '../../lib/queryClient';
 import { QUERY_KEYS } from '../../queries/keys';
 
+export interface CalculationSnapshot {
+  rateChartId?: string;
+  rateChartName?: string;
+  calculationMethod?: string;
+  appliedRate?: number | string;
+  baseRate?: number | string;
+  fatAdjustment?: number | string;
+  snfAdjustment?: number | string;
+  formulaDescription?: string;
+  calculationTimestamp?: string;
+  [key: string]: any;
+}
+
 export interface MilkEntry {
   id: string;
   date: string;
@@ -17,21 +30,40 @@ export interface MilkEntry {
   customerName: string;
   customerCode: number;
   milkType: 'COW' | 'BUFFALO' | 'MIX';
+  rateChartId?: string | null;
+  calculationSnapshot?: CalculationSnapshot | null;
+  isCorrected?: boolean;
+  isReversed?: boolean;
+  correctionReason?: string | null;
+  reversalReason?: string | null;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface CreateMilkEntryInput {
-  customerCode: number;
+  customerCode: number | string;
   milkType: 'COW' | 'BUFFALO' | 'MIX';
   quantity: number;
   fat: number;
-  snf: number;
+  snf?: number;
   shift: 'MORNING' | 'EVENING';
-  customerName: string;
-  customerId: string;
+  customerName?: string;
+  customerId?: string;
+  date?: string;
   rate?: number;
   totalAmount?: number;
-  rateChartId?: string;
+}
+
+export interface CorrectMilkEntryInput {
+  quantity?: number;
+  fat?: number;
+  snf?: number;
+  milkType?: 'COW' | 'BUFFALO' | 'MIX';
+  reason: string;
+}
+
+export interface ReverseMilkEntryInput {
+  reason: string;
 }
 
 export interface MilkCollectionState {
@@ -49,11 +81,13 @@ export interface MilkCollectionState {
   createCollectionEntry: (entry: CreateMilkEntryInput) => Promise<boolean>;
   addCollectionEntry: (entry: CreateMilkEntryInput) => Promise<boolean>; // Alias
   updateCollectionEntry: (id: string, entry: Partial<CreateMilkEntryInput>) => Promise<boolean>;
+  correctCollectionEntry: (id: string, payload: CorrectMilkEntryInput) => Promise<boolean>;
+  reverseCollectionEntry: (id: string, payload: ReverseMilkEntryInput) => Promise<boolean>;
   deleteCollectionEntry: (id: string) => Promise<boolean>;
   reset: () => void;
 }
 
-function mapRawMilkEntry(item: any): MilkEntry {
+export function mapRawMilkEntry(item: any): MilkEntry {
   let dateStr = new Date().toISOString().split('T')[0];
   if (item.date) {
     const d = new Date(item.date);
@@ -63,16 +97,23 @@ function mapRawMilkEntry(item: any): MilkEntry {
     id: item.id,
     date: dateStr,
     shift: item.shift,
-    quantity: item.quantity,
-    fat: item.fat ?? 0,
-    snf: item.snf ?? 0,
-    rate: item.rate ?? 0,
-    totalAmount: item.totalAmount ?? 0,
+    quantity: typeof item.quantity === 'number' ? item.quantity : parseFloat(item.quantity) || 0,
+    fat: typeof item.fat === 'number' ? item.fat : parseFloat(item.fat) || 0,
+    snf: typeof item.snf === 'number' ? item.snf : parseFloat(item.snf) || 0,
+    rate: typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0,
+    totalAmount: typeof item.totalAmount === 'number' ? item.totalAmount : parseFloat(item.totalAmount) || 0,
     customerId: item.customerId,
     customerName: item.customer?.name ?? 'Unknown',
     customerCode: item.customer?.code ?? 0,
     milkType: item.milkType,
+    rateChartId: item.rateChartId ?? null,
+    calculationSnapshot: item.calculationSnapshot ?? null,
+    isCorrected: Boolean(item.isCorrected),
+    isReversed: Boolean(item.isReversed),
+    correctionReason: item.correctionReason ?? null,
+    reversalReason: item.reversalReason ?? null,
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
 }
 
@@ -130,37 +171,22 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
       const res: any = await request('/milk/milk-entry', 'POST', {
         customerCode: String(entry.customerCode),
         code: Number(entry.customerCode),
+        customerId: entry.customerId,
         shift: entry.shift,
         milkType: entry.milkType,
         quantity: Number(entry.quantity),
         fat: Number(entry.fat),
-        snf: Number(entry.snf),
-        rate: entry.rate,
-        totalAmount: entry.totalAmount,
-        rateChartId: entry.rateChartId,
+        snf: Number(entry.snf ?? 0),
+        date: entry.date,
       });
 
-      let newDateStr = new Date().toISOString().split('T')[0];
-      if (res.date) {
-        const d = new Date(res.date);
-        newDateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+      const newEntry = mapRawMilkEntry(res);
+      if (entry.customerName && newEntry.customerName === 'Unknown') {
+        newEntry.customerName = entry.customerName;
       }
-
-      const newEntry: MilkEntry = {
-        id: res.id,
-        date: newDateStr,
-        shift: res.shift,
-        quantity: res.quantity,
-        fat: res.fat ?? entry.fat,
-        snf: res.snf ?? entry.snf,
-        rate: res.rate ?? entry.rate ?? 0,
-        totalAmount: res.totalAmount ?? entry.totalAmount ?? 0,
-        customerId: res.customerId,
-        customerName: entry.customerName,
-        customerCode: entry.customerCode,
-        milkType: res.milkType,
-        createdAt: res.createdAt,
-      };
+      if (entry.customerCode && !newEntry.customerCode) {
+        newEntry.customerCode = Number(entry.customerCode);
+      }
 
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
@@ -185,9 +211,6 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
       if (entry.quantity) payload.quantity = Number(entry.quantity);
       if (entry.fat !== undefined) payload.fat = Number(entry.fat);
       if (entry.snf !== undefined) payload.snf = Number(entry.snf);
-      if (entry.rate !== undefined) payload.rate = entry.rate;
-      if (entry.totalAmount !== undefined) payload.totalAmount = entry.totalAmount;
-      if (entry.rateChartId) payload.rateChartId = entry.rateChartId;
 
       const res: any = await request(`/milk/${id}`, 'PATCH', payload);
       const updatedEntry = mapRawMilkEntry(res);
@@ -206,6 +229,48 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
     }
   },
 
+  // ── AUDITED CORRECTION ─────────────────────────────────────────────────────
+  correctCollectionEntry: async (id, payload) => {
+    set({ status: 'loading', error: null });
+    try {
+      const res: any = await request(`/milk/${id}/correct`, 'POST', payload);
+      const updatedEntry = mapRawMilkEntry(res);
+
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
+      set({ 
+        collections: get().collections.map(c => c.id === id ? updatedEntry : c),
+        history: get().history.map(c => c.id === id ? updatedEntry : c),
+        status: 'success' 
+      });
+      return true;
+    } catch (err: any) {
+      set({ error: err.message || 'Failed to correct milk entry', status: 'error' });
+      return false;
+    }
+  },
+
+  // ── AUDITED REVERSAL ───────────────────────────────────────────────────────
+  reverseCollectionEntry: async (id, payload) => {
+    set({ status: 'loading', error: null });
+    try {
+      const res: any = await request(`/milk/${id}/reverse`, 'POST', payload);
+      const updatedEntry = mapRawMilkEntry(res);
+
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
+      set({ 
+        collections: get().collections.map(c => c.id === id ? updatedEntry : c),
+        history: get().history.map(c => c.id === id ? updatedEntry : c),
+        status: 'success' 
+      });
+      return true;
+    } catch (err: any) {
+      set({ error: err.message || 'Failed to reverse milk entry', status: 'error' });
+      return false;
+    }
+  },
+
   // ── DELETE ENTRY ───────────────────────────────────────────────────────────
   deleteCollectionEntry: async (id) => {
     set({ status: 'loading', error: null });
@@ -213,7 +278,11 @@ export const useMilkCollectionStore = create<MilkCollectionState>((set, get) => 
       await request(`/milk/${id}`, 'DELETE');
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
-      set({ collections: get().collections.filter((c) => c.id !== id), status: 'success' });
+      set({ 
+        collections: get().collections.filter((c) => c.id !== id),
+        history: get().history.filter((c) => c.id !== id),
+        status: 'success' 
+      });
       return true;
     } catch (err: any) {
       console.error('Delete entry failed:', err.message);

@@ -3,7 +3,6 @@ export * from './customer/useCustomerStore';
 export * from './collection/useMilkCollectionStore';
 export * from './feed/useFeedStore';
 export * from './advance/useAdvanceStore';
-export * from './rate-chart/useRateChartStore';
 export * from './profile/useProfileStore';
 export * from './billing/useBillingStore';
 export * from './dashboard/useDashboardStore';

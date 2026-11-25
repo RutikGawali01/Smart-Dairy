@@ -1,136 +1,173 @@
-// ================================
-// chart.controller.ts
-// ================================
-
 import { Request, Response } from "express";
 import asyncHandler from "../../utils/asyncHandler.js";
 import ApiResponse from "../../utils/ApiResponse.js";
+import ApiError from "../../utils/ApiError.js";
 import { RateChartService } from "./chart.service.js";
+import {
+  createRateChartSchema,
+  updateRateChartSchema,
+  previewRateSchema,
+  queryRateChartsSchema,
+  confirmImportSchema,
+  activateChartSchema,
+} from "./chart.schema.js";
 
 /**
- * CREATE DRAFT CHART
+ * 1. POST /rate-charts - Create a draft chart
  */
-const createRateChart = asyncHandler(async (req: Request, res: Response) => {
+export const createChart = asyncHandler(async (req: Request, res: Response) => {
   const adminId = req.user.id;
-  const result = await RateChartService.createRateChart(adminId, req.body);
+  const validated = createRateChartSchema.parse(req.body);
 
-  res.status(201).json(new ApiResponse(201, "Rate chart created in DRAFT status", result));
+  const chart = await RateChartService.createChart(adminId, validated);
+  res.status(201).json(new ApiResponse(201, "Rate chart created successfully as draft", chart));
 });
 
 /**
- * GET ALL CHARTS (PAGINATED & FILTERED)
+ * 2. GET /rate-charts - List charts with pagination & filters
  */
-const getAllCharts = asyncHandler(async (req: Request, res: Response) => {
+export const listCharts = asyncHandler(async (req: Request, res: Response) => {
   const adminId = req.user.id;
-  const result = await RateChartService.getAllCharts(adminId, req.query);
+  const validated = queryRateChartsSchema.parse(req.query);
 
-  res.status(200).json(new ApiResponse(200, "Rate charts fetched successfully", result));
+  const result = await RateChartService.listCharts(adminId, validated);
+  res.status(200).json(new ApiResponse(200, "Rate charts retrieved successfully", result));
 });
 
 /**
- * GET ACTIVE CHART
+ * 3. GET /rate-charts/:id - Get chart details
  */
-const getActiveChart = asyncHandler(async (req: Request, res: Response) => {
+export const getChartDetails = asyncHandler(async (req: Request, res: Response) => {
   const adminId = req.user.id;
-  const { milkType, method, chartType } = req.query;
+  const id = req.params.id as string;
 
-  const result = await RateChartService.getActiveChart(
+  const chart = await RateChartService.getChartById(adminId, id);
+  res.status(200).json(new ApiResponse(200, "Rate chart details retrieved", chart));
+});
+
+/**
+ * 4. PUT /rate-charts/:id - Update a draft chart
+ */
+export const updateChart = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+  const validated = updateRateChartSchema.parse(req.body);
+
+  const chart = await RateChartService.updateChart(adminId, id, validated);
+  res.status(200).json(new ApiResponse(200, "Draft rate chart updated successfully", chart));
+});
+
+/**
+ * 5. DELETE /rate-charts/:id - Delete an eligible draft chart
+ */
+export const deleteChart = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+
+  const result = await RateChartService.deleteChart(adminId, id);
+  res.status(200).json(new ApiResponse(200, result.message));
+});
+
+/**
+ * 6. POST /rate-charts/:id/preview - Preview calculated rates
+ */
+export const previewRate = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+  const validated = previewRateSchema.parse(req.body);
+
+  const result = await RateChartService.previewChartRate(adminId, id, validated);
+  res.status(200).json(new ApiResponse(200, "Rate calculation preview", result));
+});
+
+/**
+ * 7. POST /rate-charts/:id/activate - Activate chart
+ */
+export const activateChart = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+  const validated = activateChartSchema.parse(req.body || {});
+
+  const chart = await RateChartService.activateChart(adminId, id, validated);
+  res.status(200).json(new ApiResponse(200, "Rate chart activated successfully", chart));
+});
+
+/**
+ * 8. POST /rate-charts/:id/deactivate - Deactivate chart
+ */
+export const deactivateChart = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+
+  const result = await RateChartService.deactivateChart(adminId, id);
+  res.status(200).json(
+    new ApiResponse(
+      200,
+      result.warning
+        ? `Rate chart deactivated. Warning: ${result.warning}`
+        : "Rate chart deactivated successfully",
+      result
+    )
+  );
+});
+
+/**
+ * 9. POST /rate-charts/:id/import/validate - Step 1: Upload, Validate & Stage matrix preview
+ */
+export const validateAndStageMatrix = asyncHandler(async (req: Request, res: Response) => {
+  const adminId = req.user.id;
+  const id = req.params.id as string;
+
+  if (!req.file) {
+    throw new ApiError(400, "Excel file is required for matrix validation");
+  }
+
+  const result = await RateChartService.validateAndStageMatrix(
     adminId,
-    milkType as string,
-    method as string,
-    chartType as string
+    id,
+    req.file.path,
+    req.file.originalname
   );
 
-  res.status(200).json(new ApiResponse(200, "Active rate chart fetched successfully", result));
+  res.status(200).json(new ApiResponse(200, result.message, result));
 });
 
 /**
- * GET SINGLE CHART
+ * 10. POST /rate-charts/:id/import/confirm - Step 2: Owner Confirms Import (Atomically commits staged matrix)
  */
-const getSingleChart = asyncHandler(async (req: Request, res: Response) => {
-  const result = await RateChartService.getSingleChart(req.params.id as string);
-
-  res.status(200).json(new ApiResponse(200, "Rate chart fetched successfully", result));
-});
-
-/**
- * UPDATE DRAFT CHART
- */
-const updateChart = asyncHandler(async (req: Request, res: Response) => {
+export const confirmImportMatrix = asyncHandler(async (req: Request, res: Response) => {
   const adminId = req.user.id;
-  const result = await RateChartService.updateChart(req.params.id as string, adminId, req.body);
+  const id = req.params.id as string;
+  const { importToken } = confirmImportSchema.parse(req.body);
 
-  res.status(200).json(new ApiResponse(200, "Rate chart updated successfully", result));
+  const result = await RateChartService.confirmImportMatrix(adminId, id, importToken);
+  res.status(200).json(new ApiResponse(200, result.message, result));
 });
 
 /**
- * DELETE DRAFT CHART
+ * 11. GET /rate-charts/template - Download standard Excel rate matrix template
  */
-const deleteChart = asyncHandler(async (req: Request, res: Response) => {
+export const downloadTemplate = asyncHandler(async (req: Request, res: Response) => {
+  const buffer = RateChartService.getRateChartTemplate();
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader(
+    "Content-Disposition",
+    'attachment; filename="Rate_Chart_Matrix_Template.xlsx"'
+  );
+  res.send(buffer);
+});
+
+/**
+ * 12. GET /rate-charts/:id/history - View chart versions/history
+ */
+export const getChartHistory = asyncHandler(async (req: Request, res: Response) => {
   const adminId = req.user.id;
-  await RateChartService.deleteChart(req.params.id as string, adminId);
+  const id = req.params.id as string;
 
-  res.status(200).json(new ApiResponse(200, "Rate chart deleted successfully", null));
+  const result = await RateChartService.getChartHistory(adminId, id);
+  res.status(200).json(new ApiResponse(200, "Rate chart version history", result));
 });
-
-/**
- * ACTIVATE CHART
- */
-const activateChart = asyncHandler(async (req: Request, res: Response) => {
-  const adminId = req.user.id;
-  const result = await RateChartService.activateChart(req.params.id as string, adminId);
-
-  res.status(200).json(new ApiResponse(200, "Rate chart activated successfully", result));
-});
-
-/**
- * CLONE CHART
- */
-const cloneChart = asyncHandler(async (req: Request, res: Response) => {
-  const adminId = req.user.id;
-  const result = await RateChartService.cloneChart(req.params.id as string, adminId);
-
-  res.status(201).json(new ApiResponse(201, "Rate chart cloned as DRAFT successfully", result));
-});
-
-/**
- * PREVIEW CALCULATION (PURE MEMORY)
- */
-const previewChart = asyncHandler(async (req: Request, res: Response) => {
-  const result = await RateChartService.previewChart(req.body);
-
-  res.status(200).json(new ApiResponse(200, "Rate calculation preview generated", result));
-});
-
-/**
- * VALIDATE EXCEL MATRIX (PURE MEMORY)
- */
-const validateExcel = asyncHandler(async (req: Request, res: Response) => {
-  const result = await RateChartService.validateExcel(req.body);
-
-  res.status(200).json(new ApiResponse(200, "Excel matrix validated", result));
-});
-
-/**
- * CALCULATE RATE FOR ACTIVE CHART
- */
-const calculateRate = asyncHandler(async (req: Request, res: Response) => {
-  const adminId = req.user.id;
-  const result = await RateChartService.calculateLiveRate(adminId, req.body);
-
-  res.status(200).json(new ApiResponse(200, "Rate calculated successfully", result));
-});
-
-export const RateChartController = {
-  createRateChart,
-  getAllCharts,
-  getActiveChart,
-  getSingleChart,
-  updateChart,
-  deleteChart,
-  activateChart,
-  cloneChart,
-  previewChart,
-  validateExcel,
-  calculateRate,
-};

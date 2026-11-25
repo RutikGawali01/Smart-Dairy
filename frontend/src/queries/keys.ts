@@ -45,6 +45,10 @@ export const QUERY_KEYS = {
   },
   rateCharts: {
     all: ['rateCharts'] as const,
+    list: (params?: any) => ['rateCharts', 'list', params ?? {}] as const,
+    detail: (id: string) => ['rateCharts', 'detail', id] as const,
+    history: (id: string) => ['rateCharts', 'history', id] as const,
+    preview: (params?: any) => ['rateCharts', 'preview', params ?? {}] as const,
   },
 } as const;
 

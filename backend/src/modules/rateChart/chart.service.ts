@@ -1,492 +1,859 @@
-// ================================
-// chart.service.ts
-// ================================
-
+import fs from "fs";
+import crypto from "crypto";
+import { Prisma, RateCalculationMethod, RateChartStatus, MilkType } from "@prisma/client";
 import prisma from "../../db/index.js";
-import { cache } from "../../services/cache.service.js";
-import { cacheKeys } from "../../utils/cacheKeys.js";
+import { redis, isRedisConnected } from "../../config/redis.js";
+import logger from "../../config/logger.js";
 import ApiError from "../../utils/ApiError.js";
-import { calculateRate, RateCalculationInput } from "./chart.utils.js";
+import { Decimal } from "../../utils/decimal.js";
+import { RateCalculationService } from "./services/rateCalculation.service.js";
+import { parseRateMatrixExcel, generateRateChartTemplate, ParsedMatrixCell } from "./utils/excelParser.js";
+import {
+  getIstStartOfDay,
+  getIstEndOfDay,
+  getIstDayBefore,
+  formatIstDate,
+  checkIntervalOverlap,
+  isPeriodExpired,
+} from "./utils/dateUtils.js";
 
-const DEFAULT_CATEGORY = "COLLECTION";
+interface StagedImportData {
+  importToken: string;
+  chartId: string;
+  adminId: string;
+  fileName: string;
+  totalCells: number;
+  totalFatSteps: number;
+  totalSnfSteps: number;
+  minFat: string;
+  maxFat: string;
+  minSnf: string;
+  maxSnf: string;
+  cells: ParsedMatrixCell[];
+  uploadedAt: string;
+}
 
 /**
- * CREATE DRAFT RATE CHART
+ * Resilient Staged Import Store (Redis + Memory fallback)
  */
-const createRateChart = async (adminId: string, payload: any) => {
-  const chart = await prisma.rateChart.create({
-    data: {
-      name: payload.name,
-      milkType: payload.milkType,
-      category: DEFAULT_CATEGORY as any,
-      chartType: payload.chartType || "POINT",
-      method: payload.method || "FAT_SNF",
-      baseRate: payload.baseRate || 0,
-      isActive: false, // Created in DRAFT mode, requires explicit activation
+class StagedImportStore {
+  private static localMap = new Map<string, { expiresAt: number; data: StagedImportData }>();
+
+  public static async set(key: string, data: StagedImportData, ttlSeconds: number = 1800) {
+    if (isRedisConnected()) {
+      try {
+        await redis.set(key, JSON.stringify(data), { EX: ttlSeconds });
+        return;
+      } catch {}
+    }
+    this.localMap.set(key, {
+      expiresAt: Date.now() + ttlSeconds * 1000,
+      data,
+    });
+  }
+
+  public static async get(key: string): Promise<StagedImportData | null> {
+    if (isRedisConnected()) {
+      try {
+        const val = await redis.get(key);
+        if (val) return JSON.parse(val) as StagedImportData;
+      } catch {}
+    }
+    const local = this.localMap.get(key);
+    if (!local) return null;
+    if (Date.now() > local.expiresAt) {
+      this.localMap.delete(key);
+      return null;
+    }
+    return local.data;
+  }
+
+  public static async delete(key: string) {
+    if (isRedisConnected()) {
+      try {
+        await redis.del(key);
+      } catch {}
+    }
+    this.localMap.delete(key);
+  }
+}
+
+export class RateChartService {
+  /**
+   * 1. Create a draft rate chart
+   */
+  public static async createChart(adminId: string, data: any) {
+    const effectiveFrom = new Date(data.effectiveFrom);
+    const effectiveTo = data.effectiveTo ? new Date(data.effectiveTo) : null;
+
+    if (effectiveTo && effectiveTo < effectiveFrom) {
+      throw new ApiError(400, "Effective end date cannot be earlier than start date");
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const chart = await tx.rateChart.create({
+        data: {
+          name: data.name,
+          milkType: data.milkType,
+          method: data.method,
+          status: RateChartStatus.DRAFT,
+          effectiveFrom,
+          effectiveTo,
+          adminId, // Guaranteed from authenticated context
+          createdBy: adminId,
+        },
+      });
+
+      // If Base Differential, persist initial configuration
+      if (data.method === RateCalculationMethod.BASE_DIFFERENTIAL && data.differential) {
+        const diff = data.differential;
+        await tx.rateChartDifferential.create({
+          data: {
+            rateChartId: chart.id,
+            baseFat: new Decimal(diff.baseFat.toString()),
+            baseSnf: new Decimal(diff.baseSnf.toString()),
+            baseRate: new Decimal(diff.baseRate.toString()),
+            fatDifferential: new Decimal(diff.fatDifferential.toString()),
+            snfDifferential: new Decimal(diff.snfDifferential.toString()),
+            differentialUnit: new Decimal(diff.differentialUnit?.toString() || "0.1"),
+            minFat: diff.minFat ? new Decimal(diff.minFat.toString()) : null,
+            maxFat: diff.maxFat ? new Decimal(diff.maxFat.toString()) : null,
+            minSnf: diff.minSnf ? new Decimal(diff.minSnf.toString()) : null,
+            maxSnf: diff.maxSnf ? new Decimal(diff.maxSnf.toString()) : null,
+            minRate: diff.minRate ? new Decimal(diff.minRate.toString()) : null,
+            maxRate: diff.maxRate ? new Decimal(diff.maxRate.toString()) : null,
+          },
+        });
+      }
+
+      return tx.rateChart.findUnique({
+        where: { id: chart.id },
+        include: { differential: true },
+      });
+    });
+  }
+
+  /**
+   * 2. List charts with pagination & filters
+   */
+  public static async listCharts(
+    adminId: string,
+    query: {
+      page?: number;
+      limit?: number;
+      search?: string;
+      milkType?: MilkType;
+      method?: RateCalculationMethod;
+      status?: RateChartStatus;
+    }
+  ) {
+    const page = Number(query.page) || 1;
+    const limit = Number(query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.RateChartWhereInput = {
       adminId,
-      fatSteps: {
-        create: payload.fatSteps || [],
+      ...(query.milkType ? { milkType: query.milkType } : {}),
+      ...(query.method ? { method: query.method } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.search
+        ? {
+            name: {
+              contains: query.search,
+              mode: "insensitive",
+            },
+          }
+        : {}),
+    };
+
+    const [total, charts] = await Promise.all([
+      prisma.rateChart.count({ where }),
+      prisma.rateChart.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: [{ status: "asc" }, { effectiveFrom: "desc" }],
+        include: {
+          differential: true,
+          _count: {
+            select: {
+              rateTable: true,
+              milkEntries: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      charts,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
       },
-      snfSteps: {
-        create: payload.snfSteps || [],
-      },
-      rules: {
-        create: payload.rules || [],
-      },
-    },
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
-
-  await cache.del(cacheKeys.allCharts(adminId));
-  return chart;
-};
-
-/**
- * GET ALL CHARTS WITH PAGINATION & FILTERING
- */
-const getAllCharts = async (adminId: string, queryParams: any = {}) => {
-  const page = Math.max(1, Number(queryParams.page) || 1);
-  const limit = Math.max(1, Math.min(100, Number(queryParams.limit) || 10));
-  const skip = (page - 1) * limit;
-
-  const where: any = {
-    adminId,
-    category: DEFAULT_CATEGORY,
-  };
-
-  if (queryParams.milkType) where.milkType = queryParams.milkType;
-  if (queryParams.chartType) where.chartType = queryParams.chartType;
-  if (queryParams.status === "ACTIVE") where.isActive = true;
-  if (queryParams.status === "DRAFT" || queryParams.status === "ARCHIVED") where.isActive = false;
-
-  if (queryParams.search) {
-    where.name = {
-      contains: queryParams.search,
-      mode: "insensitive",
     };
   }
 
-  const sortBy = queryParams.sortBy || "createdAt";
-  const sortOrder = queryParams.sortOrder || "desc";
-
-  const [total, charts] = await Promise.all([
-    prisma.rateChart.count({ where }),
-    prisma.rateChart.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: {
-        [sortBy]: sortOrder,
-      },
+  /**
+   * 3. Get chart details by ID
+   */
+  public static async getChartById(adminId: string, id: string) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
       include: {
-        fatSteps: true,
-        snfSteps: true,
-        rules: true,
+        differential: true,
+        _count: {
+          select: {
+            rateTable: true,
+            milkEntries: true,
+          },
+        },
       },
-    }),
-  ]);
+    });
 
-  return {
-    items: charts,
-    pagination: {
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    },
-  };
-};
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-/**
- * GET ACTIVE CHART
- */
-const getActiveChart = async (
-  adminId: string,
-  milkType: string,
-  method: string = "FAT_SNF",
-  chartType?: string
-) => {
-  const cacheKey = cacheKeys.activeChart(adminId, milkType, DEFAULT_CATEGORY, method);
+    // Include sample cells if RATE_TABLE for instant UI preview
+    let sampleCells: any[] = [];
+    if (chart.method === RateCalculationMethod.RATE_TABLE) {
+      sampleCells = await prisma.rateChartCell.findMany({
+        where: { rateChartId: id },
+        take: 15,
+        orderBy: [{ fat: "asc" }, { snf: "asc" }],
+      });
+    }
 
-  const cached = await cache.get(cacheKey);
-  if (cached) {
-    return cached;
+    return {
+      ...chart,
+      sampleCells,
+    };
   }
 
-  const whereClause: any = {
-    adminId,
-    milkType: milkType as any,
-    category: DEFAULT_CATEGORY as any,
-    method: method as any,
-    isActive: true,
-  };
+  /**
+   * 4. Update a draft chart
+   */
+  public static async updateChart(adminId: string, id: string, data: any) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+      include: { differential: true },
+    });
 
-  if (chartType) {
-    whereClause.chartType = chartType as any;
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
+
+    // Production safety rule: Only DRAFT charts can be modified in place
+    if (chart.status !== RateChartStatus.DRAFT) {
+      throw new ApiError(
+        400,
+        `Cannot edit a ${chart.status.toLowerCase()} chart. To modify rates, create a new draft version.`
+      );
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      const updateData: Prisma.RateChartUpdateInput = {};
+      if (data.name !== undefined) updateData.name = data.name;
+      if (data.effectiveFrom !== undefined) updateData.effectiveFrom = new Date(data.effectiveFrom);
+      if (data.effectiveTo !== undefined) {
+        updateData.effectiveTo = data.effectiveTo ? new Date(data.effectiveTo) : null;
+      }
+
+      await tx.rateChart.update({
+        where: { id },
+        data: updateData,
+      });
+
+      if (chart.method === RateCalculationMethod.BASE_DIFFERENTIAL && data.differential) {
+        const diff = data.differential;
+        await tx.rateChartDifferential.upsert({
+          where: { rateChartId: id },
+          create: {
+            rateChartId: id,
+            baseFat: new Decimal(diff.baseFat.toString()),
+            baseSnf: new Decimal(diff.baseSnf.toString()),
+            baseRate: new Decimal(diff.baseRate.toString()),
+            fatDifferential: new Decimal(diff.fatDifferential.toString()),
+            snfDifferential: new Decimal(diff.snfDifferential.toString()),
+            differentialUnit: new Decimal(diff.differentialUnit?.toString() || "0.1"),
+            minFat: diff.minFat ? new Decimal(diff.minFat.toString()) : null,
+            maxFat: diff.maxFat ? new Decimal(diff.maxFat.toString()) : null,
+            minSnf: diff.minSnf ? new Decimal(diff.minSnf.toString()) : null,
+            maxSnf: diff.maxSnf ? new Decimal(diff.maxSnf.toString()) : null,
+            minRate: diff.minRate ? new Decimal(diff.minRate.toString()) : null,
+            maxRate: diff.maxRate ? new Decimal(diff.maxRate.toString()) : null,
+          },
+          update: {
+            baseFat: new Decimal(diff.baseFat.toString()),
+            baseSnf: new Decimal(diff.baseSnf.toString()),
+            baseRate: new Decimal(diff.baseRate.toString()),
+            fatDifferential: new Decimal(diff.fatDifferential.toString()),
+            snfDifferential: new Decimal(diff.snfDifferential.toString()),
+            differentialUnit: new Decimal(diff.differentialUnit?.toString() || "0.1"),
+            minFat: diff.minFat ? new Decimal(diff.minFat.toString()) : null,
+            maxFat: diff.maxFat ? new Decimal(diff.maxFat.toString()) : null,
+            minSnf: diff.minSnf ? new Decimal(diff.minSnf.toString()) : null,
+            maxSnf: diff.maxSnf ? new Decimal(diff.maxSnf.toString()) : null,
+            minRate: diff.minRate ? new Decimal(diff.minRate.toString()) : null,
+            maxRate: diff.maxRate ? new Decimal(diff.maxRate.toString()) : null,
+          },
+        });
+      }
+
+      return tx.rateChart.findUnique({
+        where: { id },
+        include: { differential: true },
+      });
+    });
   }
 
-  const chart = await prisma.rateChart.findFirst({
-    where: whereClause,
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
+  /**
+   * 5. Delete an eligible draft chart
+   */
+  public static async deleteChart(adminId: string, id: string) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+      include: {
+        _count: {
+          select: { milkEntries: true },
+        },
+      },
+    });
 
-  if (chart) {
-    await cache.set(cacheKey, chart, 60 * 60);
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
+
+    if (chart.status === RateChartStatus.ACTIVE) {
+      throw new ApiError(400, "Cannot delete an active rate chart. Deactivate or archive it instead.");
+    }
+
+    if (chart._count.milkEntries > 0) {
+      throw new ApiError(
+        400,
+        `Cannot delete rate chart because it is referenced by ${chart._count.milkEntries} historical milk collections.`
+      );
+    }
+
+    await prisma.rateChart.delete({
+      where: { id },
+    });
+
+    return { message: "Rate chart deleted successfully" };
   }
 
-  return chart;
-};
+  /**
+   * 6. Preview calculated rates on a chart
+   */
+  public static async previewChartRate(
+    adminId: string,
+    id: string,
+    params: {
+      fat: number | string;
+      snf: number | string;
+      quantity?: number | string;
+      collectionDate?: string;
+    }
+  ) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+      include: { differential: true },
+    });
 
-/**
- * GET SINGLE CHART
- */
-const getSingleChart = async (id: string) => {
-  const cacheKey = cacheKeys.singleChart(id);
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-  const cached = await cache.get(cacheKey);
-  if (cached) {
-    return cached;
+    const collectionDate = params.collectionDate ? new Date(params.collectionDate) : new Date();
+
+    // Evaluate directly against THIS specific chart (works for DRAFT, ACTIVE, INACTIVE, ARCHIVED)
+    return await RateCalculationService.calculateWithChartId(id, {
+      dairyId: adminId,
+      milkType: chart.milkType,
+      fat: params.fat,
+      snf: params.snf,
+      quantity: params.quantity || 1,
+      collectionDate,
+    });
   }
 
-  const chart = await prisma.rateChart.findUnique({
-    where: { id },
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
+  /**
+   * 7. Activate chart
+   * Enforces:
+   * - Only DRAFT charts can be activated
+   * - Completeness validation (rate table cells or differential configuration)
+   * - Checks that chart effective period has not completely expired
+   * - PostgreSQL advisory locking for atomic concurrency protection per (adminId, milkType)
+   * - Overlap detection: detects conflicts with current or future ACTIVE charts
+   * - Requires explicit confirmReplace=true to supersede or safely shorten conflicting charts
+   * - Prevents overwriting later scheduled charts
+   * - Invalidates Redis cache post-commit
+   * - Records structured audit log
+   */
+  public static async activateChart(
+    adminId: string,
+    id: string,
+    options: { confirmReplace?: boolean } = {}
+  ) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+      include: {
+        differential: true,
+        _count: { select: { rateTable: true } },
+      },
+    });
 
-  if (!chart) {
-    throw new ApiError(404, "Rate chart not found");
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
+
+    // Rule 1: Only DRAFT charts can be activated
+    if (chart.status !== RateChartStatus.DRAFT) {
+      throw new ApiError(
+        400,
+        `Cannot activate chart in '${chart.status}' status. Only DRAFT charts can be activated.`
+      );
+    }
+
+    // Rule 2: Expiration check (cannot activate already expired chart)
+    if (isPeriodExpired(chart.effectiveTo)) {
+      throw new ApiError(
+        400,
+        `Cannot activate a rate chart whose effective period has already expired (${formatIstDate(chart.effectiveTo!)})`
+      );
+    }
+
+    // Rule 3: Method completeness checks
+    if (chart.method === RateCalculationMethod.RATE_TABLE && chart._count.rateTable === 0) {
+      throw new ApiError(
+        400,
+        "Cannot activate a Table Matrix chart without importing matrix rate cells"
+      );
+    }
+
+    if (chart.method === RateCalculationMethod.BASE_DIFFERENTIAL && !chart.differential) {
+      throw new ApiError(
+        400,
+        "Cannot activate Base Differential chart without differential configuration"
+      );
+    }
+
+    let replacedCount = 0;
+
+    // Execute within transaction with concurrency protection
+    await prisma.$transaction(async (tx) => {
+      // Concurrency protection: acquire transaction-level advisory lock on (adminId, milkType)
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'rate_chart_activation:' + adminId + ':' + chart.milkType}))`;
+
+      // Find existing active charts for this dairy and milk type
+      const activeCharts = await tx.rateChart.findMany({
+        where: {
+          adminId,
+          milkType: chart.milkType,
+          status: RateChartStatus.ACTIVE,
+          id: { not: id },
+        },
+        orderBy: { effectiveFrom: "asc" },
+      });
+
+      // Detect overlapping active charts
+      const conflicts = activeCharts.filter((existing) =>
+        checkIntervalOverlap(
+          chart.effectiveFrom,
+          chart.effectiveTo,
+          existing.effectiveFrom,
+          existing.effectiveTo
+        )
+      );
+
+      if (conflicts.length > 0) {
+        if (!options.confirmReplace) {
+          // Reject with 409 Conflict if explicit confirmation is missing
+          throw new ApiError(
+            409,
+            `Activation conflicts with ${conflicts.length} active rate chart(s) for ${chart.milkType} milk. Set confirmReplace: true to supersede or shorten previous chart.`,
+            {
+              code: "RATE_CHART_CONFLICT",
+              errors: conflicts.map((c) => ({
+                id: c.id,
+                name: c.name,
+                milkType: c.milkType,
+                effectiveFrom: formatIstDate(c.effectiveFrom),
+                effectiveTo: c.effectiveTo ? formatIstDate(c.effectiveTo) : null,
+                requiresConfirmation: true,
+              })),
+            }
+          );
+        }
+
+        // Owner explicitly confirmed replacement (confirmReplace === true)
+        const newStartMs = getIstStartOfDay(chart.effectiveFrom).getTime();
+
+        for (const conflicting of conflicts) {
+          const existStartMs = getIstStartOfDay(conflicting.effectiveFrom).getTime();
+
+          // Safety Rule: Do not overwrite later scheduled charts
+          if (existStartMs > newStartMs) {
+            throw new ApiError(
+              409,
+              `Cannot automatically replace later scheduled chart '${conflicting.name}' starting on ${formatIstDate(conflicting.effectiveFrom)}. Please adjust effective dates or deactivate the future chart first.`
+            );
+          }
+
+          if (formatIstDate(conflicting.effectiveFrom) === formatIstDate(chart.effectiveFrom)) {
+            // Started on the exact same calendar day -> fully superseded
+            await tx.rateChart.update({
+              where: { id: conflicting.id },
+              data: {
+                status: RateChartStatus.INACTIVE,
+                effectiveTo: chart.effectiveFrom,
+              },
+            });
+            replacedCount++;
+          } else {
+            // Conflicting chart started earlier -> safely shorten its effectiveTo to the day before
+            const shortenedEffectiveTo = getIstDayBefore(chart.effectiveFrom);
+            const isNowExpired = isPeriodExpired(shortenedEffectiveTo);
+
+            await tx.rateChart.update({
+              where: { id: conflicting.id },
+              data: {
+                effectiveTo: shortenedEffectiveTo,
+                status: isNowExpired ? RateChartStatus.INACTIVE : RateChartStatus.ACTIVE,
+              },
+            });
+            replacedCount++;
+          }
+        }
+      }
+
+      // Activate the target chart
+      await tx.rateChart.update({
+        where: { id },
+        data: {
+          status: RateChartStatus.ACTIVE,
+        },
+      });
+    });
+
+    // Invalidate Redis hot cache immediately after successful commit
+    await RateCalculationService.invalidateChartCache(adminId, chart.milkType);
+
+    // Record structured audit log
+    logger.info("RATE_CHART_ACTIVATED", {
+      adminId,
+      chartId: id,
+      name: chart.name,
+      milkType: chart.milkType,
+      effectiveFrom: formatIstDate(chart.effectiveFrom),
+      effectiveTo: chart.effectiveTo ? formatIstDate(chart.effectiveTo) : null,
+      replacedCount,
+    });
+
+    return await prisma.rateChart.findUnique({
+      where: { id },
+      include: { differential: true },
+    });
   }
 
-  await cache.set(cacheKey, chart);
-  return chart;
-};
+  /**
+   * 8. Deactivate chart
+   * Enforces:
+   * - Only ACTIVE charts can be deactivated
+   * - Scoped to authenticated adminId
+   * - Preserves historical collection data
+   * - Checks whether any active chart remains for this milkType
+   * - Returns warning if 0 active charts remain
+   * - Invalidates Redis cache post-commit
+   * - Records structured audit log
+   */
+  public static async deactivateChart(adminId: string, id: string) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+    });
 
-/**
- * UPDATE DRAFT CHART ONLY
- */
-const updateChart = async (id: string, adminId: string, payload: any) => {
-  const existing = await prisma.rateChart.findUnique({ where: { id } });
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-  if (!existing || existing.adminId !== adminId) {
-    throw new ApiError(404, "Rate chart not found");
-  }
+    if (chart.status !== RateChartStatus.ACTIVE) {
+      throw new ApiError(400, `Only ACTIVE charts can be deactivated. Current status is ${chart.status}`);
+    }
 
-  if (existing.isActive) {
-    throw new ApiError(400, "Active rate charts are immutable. Deactivate or clone to create a new draft.");
-  }
+    const updated = await prisma.rateChart.update({
+      where: { id },
+      data: { status: RateChartStatus.INACTIVE },
+    });
 
-  // Delete existing sub-records before recreating
-  await prisma.fatStep.deleteMany({ where: { rateChartId: id } });
-  await prisma.snfStep.deleteMany({ where: { rateChartId: id } });
-  await prisma.bonusPenaltyRule.deleteMany({ where: { rateChartId: id } });
-
-  await cache.del(cacheKeys.singleChart(id));
-  await cache.del(cacheKeys.allCharts(adminId));
-
-  return prisma.rateChart.update({
-    where: { id },
-    data: {
-      name: payload.name ?? existing.name,
-      milkType: payload.milkType ?? existing.milkType,
-      chartType: payload.chartType ?? existing.chartType,
-      method: payload.method ?? existing.method,
-      baseRate: payload.baseRate ?? existing.baseRate,
-      category: DEFAULT_CATEGORY as any,
-      fatSteps: payload.fatSteps ? { create: payload.fatSteps } : undefined,
-      snfSteps: payload.snfSteps ? { create: payload.snfSteps } : undefined,
-      rules: payload.rules ? { create: payload.rules } : undefined,
-    },
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
-};
-
-/**
- * DELETE DRAFT CHART ONLY
- */
-const deleteChart = async (id: string, adminId: string) => {
-  const existing = await prisma.rateChart.findUnique({ where: { id } });
-
-  if (!existing || existing.adminId !== adminId) {
-    throw new ApiError(404, "Rate chart not found");
-  }
-
-  if (existing.isActive) {
-    throw new ApiError(400, "Active rate charts cannot be deleted. Archive or deactivate first.");
-  }
-
-  // Protect historical financial data by ensuring chart is not referenced in milk entries
-  const usageCount = await (prisma.milkEntry as any).count({
-    where: {
-      rateChartId: id,
-    },
-  });
-
-  if (usageCount > 0) {
-    throw new ApiError(
-      
-      400,
-      `Cannot delete rate chart. It is referenced by ${usageCount} historical milk collection entry/entries.`
-    );
-  }
-
-  await cache.del(cacheKeys.singleChart(id));
-  await cache.del(cacheKeys.allCharts(adminId));
-  await cache.clearPattern("active-chart:*");
-
-  return prisma.rateChart.delete({ where: { id } });
-};
-
-/**
- * ATOMIC ACTIVATION TRANSACTION
- */
-const activateChart = async (id: string, adminId: string) => {
-  const chartToActivate = await prisma.rateChart.findUnique({ where: { id } });
-
-  if (!chartToActivate || chartToActivate.adminId !== adminId) {
-    throw new ApiError(404, "Rate chart not found");
-  }
-
-  return prisma.$transaction(async (tx) => {
-    // 1. Deactivate currently active chart for this combination
-    await tx.rateChart.updateMany({
+    // Check if any other ACTIVE chart remains for this dairy and milkType
+    const remainingActiveCount = await prisma.rateChart.count({
       where: {
         adminId,
-        milkType: chartToActivate.milkType,
-        category: DEFAULT_CATEGORY as any,
-        method: chartToActivate.method,
-        isActive: true,
-      },
-      data: {
-        isActive: false,
+        milkType: chart.milkType,
+        status: RateChartStatus.ACTIVE,
       },
     });
 
-    // 2. Activate selected chart
-    const activated = await tx.rateChart.update({
-      where: { id },
-      data: {
-        isActive: true,
-        effectiveFrom: new Date(),
-      },
-      include: {
-        fatSteps: true,
-        snfSteps: true,
-        rules: true,
-      },
-    });
+    // Invalidate Redis hot cache
+    await RateCalculationService.invalidateChartCache(adminId, chart.milkType);
 
-    // 3. Clear Redis Cache
-    await cache.del(cacheKeys.allCharts(adminId));
-    await cache.del(cacheKeys.activeChart(adminId, activated.milkType, DEFAULT_CATEGORY, activated.method));
-
-    return activated;
-  });
-};
-
-/**
- * CLONE API
- */
-const cloneChart = async (id: string, adminId: string) => {
-  const original = await prisma.rateChart.findUnique({
-    where: { id },
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
-
-  if (!original || original.adminId !== adminId) {
-    throw new ApiError(404, "Rate chart not found");
-  }
-
-  const cloned = await prisma.rateChart.create({
-    data: {
-      name: `${original.name} (Copy)`,
-      milkType: original.milkType,
-      category: DEFAULT_CATEGORY as any,
-      chartType: original.chartType,
-      method: original.method,
-      baseRate: original.baseRate,
-      isActive: false, // Cloned chart starts as DRAFT
+    logger.info("RATE_CHART_DEACTIVATED", {
       adminId,
-      fatSteps: {
-        create: original.fatSteps.map((s) => ({ startValue: s.startValue, increment: s.increment })),
-      },
-      snfSteps: {
-        create: original.snfSteps.map((s) => ({ startValue: s.startValue, increment: s.increment })),
-      },
-      rules: {
-        create: original.rules.map((r) => ({ axis: r.axis, fromValue: r.fromValue, toValue: r.toValue, amount: r.amount })),
-      },
-    },
-    include: {
-      fatSteps: true,
-      snfSteps: true,
-      rules: true,
-    },
-  });
+      chartId: id,
+      name: chart.name,
+      milkType: chart.milkType,
+      remainingActiveCount,
+    });
 
-  await cache.del(cacheKeys.allCharts(adminId));
-  return cloned;
-};
-
-/**
- * PREVIEW CALCULATION (PURE MEMORY)
- */
-const previewChart = async (payload: any) => {
-  const calculationInput: RateCalculationInput = {
-    method: payload.method || "FAT_SNF",
-    baseRate: payload.baseRate || 0,
-    fatSteps: payload.fatSteps || [],
-    snfSteps: payload.snfSteps || [],
-    rules: payload.rules || [],
-    excelMatrix: payload.excelMatrix,
-    fat: payload.sampleFat ?? 3.5,
-    snf: payload.sampleSnf ?? 8.5,
-  };
-
-  const result = calculateRate(calculationInput);
-  const quantity = payload.sampleQuantity || 1;
-  const amount = Number((result.rate * quantity).toFixed(2));
-  const warnings: string[] = [];
-
-  if (result.rate === 0 && payload.baseRate > 0) {
-    warnings.push("Calculated rate evaluated to 0. Check if penalty rules exceed base rate.");
-  }
-
-  return {
-    sampleInput: {
-      fat: calculationInput.fat,
-      snf: calculationInput.snf,
-      quantity,
-      method: calculationInput.method,
-    },
-    baseRate: result.baseRate,
-    fatAdjustment: result.fatBonusPenalty,
-    snfAdjustment: result.snfBonusPenalty,
-    bonus: result.totalBonusPenalty > 0 ? result.totalBonusPenalty : 0,
-    penalty: result.totalBonusPenalty < 0 ? Math.abs(result.totalBonusPenalty) : 0,
-    finalRate: result.rate,
-    amount,
-    calculatedPrice: result.rate, // Preserved for backward compatibility
-    warnings,
-    breakdown: result.breakdown,
-  };
-};
-
-/**
- * VALIDATE EXCEL MATRIX (PURE MEMORY)
- */
-const validateExcel = async (payload: any) => {
-  const { excelMatrix } = payload;
-  const warnings: string[] = [];
-  const errors: string[] = [];
-
-  if (!excelMatrix || !excelMatrix.fatHeader || !excelMatrix.snfHeader || !excelMatrix.rates) {
-    errors.push("Invalid Excel matrix format: fatHeader, snfHeader, and rates matrix grid are required");
     return {
-      valid: false,
-      summary: {
-        rows: 0,
-        columns: 0,
-        cells: 0,
-      },
-      warnings: [],
-      errors,
+      chart: updated,
+      warning:
+        remainingActiveCount === 0
+          ? `No other active rate chart remains for ${chart.milkType} milk. Subsequent milk collections will fail or require manual rates until another chart is activated.`
+          : undefined,
     };
   }
 
-  const rows = excelMatrix.snfHeader.length;
-  const columns = excelMatrix.fatHeader.length;
-  const cells = rows * columns;
+  /**
+   * 9. Step 1: Upload, Parse, and Validate Excel Matrix (Stage in memory/Redis)
+   * Does NOT write to production rate matrix. Returns validation preview & confirmation token.
+   */
+  public static async validateAndStageMatrix(
+    adminId: string,
+    id: string,
+    filePath: string,
+    originalName: string
+  ) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+    });
 
-  if (excelMatrix.rates.length !== rows) {
-    errors.push(`Matrix row count (${excelMatrix.rates.length}) does not match SNF header count (${rows})`);
-  }
+    if (!chart) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-  for (let i = 0; i < excelMatrix.rates.length; i++) {
-    if (Array.isArray(excelMatrix.rates[i]) && excelMatrix.rates[i].length !== columns) {
-      warnings.push(`Row ${i + 1} column count (${excelMatrix.rates[i].length}) differs from FAT header count (${columns})`);
+    if (chart.method !== RateCalculationMethod.RATE_TABLE) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      throw new ApiError(400, "Excel matrix import is only available for RATE_TABLE calculation method");
+    }
+
+    if (chart.status !== RateChartStatus.DRAFT) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      throw new ApiError(400, "Matrix can only be imported into a DRAFT rate chart. Active or published charts cannot be overwritten.");
+    }
+
+    try {
+      const parsed = parseRateMatrixExcel(filePath);
+
+      if (!parsed.isValid) {
+        return {
+          isValid: false,
+          totalCells: 0,
+          totalFatSteps: 0,
+          totalSnfSteps: 0,
+          minFat: "0.0",
+          maxFat: "0.0",
+          minSnf: "0.0",
+          maxSnf: "0.0",
+          sampleCells: [],
+          errors: parsed.errors,
+          warnings: parsed.warnings,
+          message: "Excel matrix validation failed. Please correct the errors and re-upload.",
+        };
+      }
+
+      // Generate cryptographically secure import token
+      const importToken = crypto.randomUUID();
+      const stagingKey = `rate_chart:import_staged:${adminId}:${id}:${importToken}`;
+
+      const stagedData: StagedImportData = {
+        importToken,
+        chartId: id,
+        adminId,
+        fileName: originalName,
+        totalCells: parsed.totalCells,
+        totalFatSteps: parsed.totalFatSteps,
+        totalSnfSteps: parsed.totalSnfSteps,
+        minFat: parsed.minFat,
+        maxFat: parsed.maxFat,
+        minSnf: parsed.minSnf,
+        maxSnf: parsed.maxSnf,
+        cells: parsed.cells,
+        uploadedAt: new Date().toISOString(),
+      };
+
+      // Stage for 30 minutes
+      await StagedImportStore.set(stagingKey, stagedData, 1800);
+
+      return {
+        isValid: true,
+        importToken,
+        fileName: originalName,
+        totalCells: parsed.totalCells,
+        totalFatSteps: parsed.totalFatSteps,
+        totalSnfSteps: parsed.totalSnfSteps,
+        minFat: parsed.minFat,
+        maxFat: parsed.maxFat,
+        minSnf: parsed.minSnf,
+        maxSnf: parsed.maxSnf,
+        sampleCells: parsed.sampleCells,
+        cells: parsed.cells,
+        fatSteps: parsed.fatSteps,
+        snfSteps: parsed.snfSteps,
+        errors: [],
+        warnings: parsed.warnings,
+        message: "Matrix passed all validations. Explicit owner confirmation is required to commit to draft chart.",
+      };
+    } finally {
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {}
+      }
     }
   }
 
-  return {
-    valid: errors.length === 0,
-    summary: {
-      rows,
-      columns,
-      cells,
-    },
-    warnings,
-    errors,
-  };
-};
+  /**
+   * 10. Step 2: Owner Confirms Import
+   * Atomically replaces the draft matrix inside a database transaction,
+   * performs post-commit verification, and logs audit metadata.
+   */
+  public static async confirmImportMatrix(adminId: string, id: string, importToken: string) {
+    const chart = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+    });
 
-/**
- * CALCULATE LIVE RATE FOR ACTIVE CHART
- */
-const calculateLiveRate = async (adminId: string, payload: any) => {
-  const { milkType, fat, snf, quantity = 1, method = "FAT_SNF" } = payload;
+    if (!chart) {
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-  const activeChart: any = await getActiveChart(adminId, milkType, method);
+    if (chart.status !== RateChartStatus.DRAFT) {
+      throw new ApiError(400, "Cannot import into a non-draft rate chart.");
+    }
 
-  if (!activeChart) {
-    throw new ApiError(404, `No active rate chart found for milk type '${milkType}'`);
+    const stagingKey = `rate_chart:import_staged:${adminId}:${id}:${importToken}`;
+    const staged = await StagedImportStore.get(stagingKey);
+
+    if (!staged || staged.chartId !== id || staged.adminId !== adminId) {
+      throw new ApiError(
+        400,
+        "Import session has expired or is invalid. Please upload the Excel file again to preview."
+      );
+    }
+
+    const now = new Date();
+
+    // Atomic replacement inside database transaction
+    await prisma.$transaction(async (tx) => {
+      // 1. Wipe previous cells for this draft chart
+      await tx.rateChartCell.deleteMany({
+        where: { rateChartId: id },
+      });
+
+      // 2. Insert cells in batches of 500
+      const batchSize = 500;
+      for (let i = 0; i < staged.cells.length; i += batchSize) {
+        const chunk = staged.cells.slice(i, i + batchSize).map((c) => ({
+          rateChartId: id,
+          fat: new Decimal(c.fat),
+          snf: new Decimal(c.snf),
+          rate: new Decimal(c.rate),
+        }));
+
+        await tx.rateChartCell.createMany({
+          data: chunk,
+        });
+      }
+
+      // 3. Update chart metadata & audit columns
+      await tx.rateChart.update({
+        where: { id },
+        data: {
+          sourceFileName: staged.fileName,
+          totalCells: staged.totalCells,
+          minFat: new Decimal(staged.minFat),
+          maxFat: new Decimal(staged.maxFat),
+          minSnf: new Decimal(staged.minSnf),
+          maxSnf: new Decimal(staged.maxSnf),
+          importedAt: now,
+          importedBy: adminId,
+        },
+      });
+    });
+
+    // 4. Post-save integrity verification
+    const actualSavedCount = await prisma.rateChartCell.count({
+      where: { rateChartId: id },
+    });
+
+    if (actualSavedCount !== staged.totalCells) {
+      throw new ApiError(
+        500,
+        `Integrity check failed: Expected ${staged.totalCells} cells but committed ${actualSavedCount}. Transaction aborted.`
+      );
+    }
+
+    // Clean up staging session
+    await StagedImportStore.delete(stagingKey);
+
+    return {
+      success: true,
+      message: "Rate matrix successfully committed to draft chart.",
+      totalCells: staged.totalCells,
+      minFat: staged.minFat,
+      maxFat: staged.maxFat,
+      minSnf: staged.minSnf,
+      maxSnf: staged.maxSnf,
+      sourceFileName: staged.fileName,
+      importedAt: now.toISOString(),
+      importedBy: adminId,
+    };
   }
 
-  const calcResult = calculateRate({
-    method: activeChart.method,
-    baseRate: activeChart.baseRate,
-    fatSteps: activeChart.fatSteps,
-    snfSteps: activeChart.snfSteps,
-    rules: activeChart.rules,
-    fat,
-    snf,
-  });
+  /**
+   * 11. Generate standard downloadable Excel matrix template
+   */
+  public static getRateChartTemplate(): Buffer {
+    return generateRateChartTemplate();
+  }
 
-  const amount = Number((calcResult.rate * quantity).toFixed(2));
+  /**
+   * 12. View chart versions / history for this dairy & milkType
+   */
+  public static async getChartHistory(adminId: string, id: string) {
+    const current = await prisma.rateChart.findFirst({
+      where: { id, adminId },
+    });
 
-  return {
-    rate: calcResult.rate,
-    amount,
-    baseRate: calcResult.baseRate,
-    fatAdjustment: calcResult.fatBonusPenalty,
-    snfAdjustment: calcResult.snfBonusPenalty,
-    bonus: calcResult.totalBonusPenalty > 0 ? calcResult.totalBonusPenalty : 0,
-    penalty: calcResult.totalBonusPenalty < 0 ? Math.abs(calcResult.totalBonusPenalty) : 0,
-    chartId: activeChart.id,
-    chartName: activeChart.name,
-    breakdown: calcResult.breakdown,
-  };
-};
+    if (!current) {
+      throw new ApiError(404, "Rate chart not found");
+    }
 
-export const RateChartService = {
-  createRateChart,
-  getAllCharts,
-  getActiveChart,
-  getSingleChart,
-  updateChart,
-  deleteChart,
-  activateChart,
-  cloneChart,
-  previewChart,
-  validateExcel,
-  calculateLiveRate,
-};
+    const history = await prisma.rateChart.findMany({
+      where: {
+        adminId,
+        milkType: current.milkType,
+      },
+      orderBy: [{ effectiveFrom: "desc" }, { createdAt: "desc" }],
+      include: {
+        differential: true,
+        _count: {
+          select: {
+            rateTable: true,
+            milkEntries: true,
+          },
+        },
+      },
+    });
+
+    return {
+      milkType: current.milkType,
+      history,
+    };
+  }
+}
+

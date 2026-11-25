@@ -426,10 +426,10 @@ export const getDashboard =
             acc: number,
 
             item: {
-                quantity: number;
+                quantity: any;
             }
         ) =>
-            acc + item.quantity,
+            acc + Number(item.quantity || 0),
 
         0
     );
@@ -441,11 +441,11 @@ export const getDashboard =
 
             item: {
                 totalAmount:
-                    number | null;
+                    any;
             }
         ) =>
             acc +
-            (item.totalAmount || 0),
+            Number(item.totalAmount || 0),
 
         0
     );

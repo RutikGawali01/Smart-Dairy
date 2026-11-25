@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "nodemon --watch src --ext ts --exec tsx src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "test:phase2a": "tsx src/tests/rateChartPhase2A.test.ts",
+    "test:phase2b": "tsx src/tests/rateChartPhase2B.test.ts",
+    "test:phase2c": "tsx src/tests/rateChartPhase2C.test.ts",
+    "test:phase2d": "tsx src/tests/rateChartPhase2D.test.ts",
+    "test:phase2e": "tsx src/tests/apiContractPhase2E.test.ts"
   },
   "keywords": [],
   "author": "",
@@ -20,6 +25,7 @@
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
+    "decimal.js": "^10.6.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",

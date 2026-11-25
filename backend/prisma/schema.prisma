@@ -55,12 +55,13 @@ model Admin {
    * RELATIONS
    */
   customers     Customer[]
-  rateCharts    RateChart[]
   foodDealers   FoodDealer[]
   foodPurchases FoodPurchase[]
   foodSales     FoodSale[]
 
-  advances Advance[]
+  advances   Advance[]
+  rateCharts RateChart[]
+  milkEntryAudits MilkEntryAudit[]
 
   /**
    * TIMESTAMPS
@@ -109,6 +110,8 @@ model Customer {
   foodSales FoodSale[]
 
   advances Advance[]
+
+  milkEntryAudits MilkEntryAudit[]
 
   /**
    * TIMESTAMPS
@@ -168,15 +171,28 @@ model MilkEntry {
 
   milkType MilkType
 
-  quantity Float
+  quantity Decimal @db.Decimal(10, 2)
 
-  fat Float?
+  fat Decimal? @db.Decimal(5, 2)
 
-  snf Float?
+  snf Decimal? @db.Decimal(5, 2)
 
-  rate Float?
+  rate Decimal? @db.Decimal(12, 4)
 
-  totalAmount Float?
+  totalAmount Decimal? @db.Decimal(14, 2)
+
+  /**
+   * HISTORICAL SNAPSHOT & CORRECTION (Phase 2D)
+   */
+  calculationSnapshot Json?
+
+  isCorrected Boolean @default(false)
+
+  isReversed Boolean @default(false)
+
+  correctionReason String?
+
+  reversalReason String?
 
   /**
    * CUSTOMER RELATION
@@ -184,11 +200,15 @@ model MilkEntry {
 
   customerId String
 
-  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  /**
+   * RATE CHART RELATION
+   */
 
   rateChartId String?
 
-  rateChart RateChart? @relation(fields: [rateChartId], references: [id], onDelete: SetNull)
+  rateChart RateChart? @relation(fields: [rateChartId], references: [id], onDelete: Restrict)
 
   /**
    * TIMESTAMPS
@@ -201,6 +221,7 @@ model MilkEntry {
   @@index([customerId])
   @@index([date])
   @@index([customerId, date])
+  @@index([rateChartId])
 }
 
 model FoodEntry {
@@ -259,225 +280,121 @@ enum PaymentMode {
   CREDIT
 }
 
-// model RateChart {
-//   id String @id @default(cuid())
+/**
+ * RATE CHART MODULE ENUMS
+ */
 
-//   /**
-//    * BASIC INFO
-//    */
+enum RateCalculationMethod {
+  RATE_TABLE
+  BASE_DIFFERENTIAL
+}
 
-//   name String
+enum RateChartStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
 
-//   milkType MilkType
-
-//   category RateCategory
-
-//   chartType ChartType
-
-//   method RateMethod
-
-//   /**
-//    * BASE
-//    */
-
-//   baseRate Float @default(0)
-
-//   /**
-//    * RELATION
-//    */
-
-//   adminId String
-//   admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
-
-//   /**
-//    * STEPS
-//    */
-
-//   fatSteps FatStep[]
-
-//   snfSteps SnfStep[]
-
-//   /**
-//    * BONUS / PENALTY
-//    */
-
-//   rules BonusPenaltyRule[]
-
-//   /**
-//    * STATUS
-//    */
-
-//   isActive Boolean @default(false)
-
-//   effectiveFrom DateTime?
-//   /**
-//    * TIMESTAMPS
-//    */
-
-//   createdAt DateTime @default(now())
-
-//   updatedAt DateTime @updatedAt
-
-//   @@index([adminId])
-// }
-
-// ================================
-// prisma/schema.prisma
-// ================================
-
+/**
+ * RATE CHART (A)
+ * Common rate chart information for both Table Matrix & Base Differential methods
+ */
 model RateChart {
   id String @id @default(cuid())
 
-  /**
-   * BASIC INFO
-   */
-
-  name String
-
+  name     String
   milkType MilkType
+  method   RateCalculationMethod
+  status   RateChartStatus       @default(DRAFT)
 
-  category RateCategory
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
 
-  chartType ChartType
-
-  method RateMethod
-
-  /**
-   * BASE
-   */
-
-  baseRate Float @default(0)
-
-  /**
-   * STATUS
-   */
-
-  isActive Boolean @default(true)
+  // Excel / Matrix boundary metadata
+  sourceFileName String?
+  totalCells     Int?
+  minFat         Decimal?  @db.Decimal(5, 2)
+  maxFat         Decimal?  @db.Decimal(5, 2)
+  minSnf         Decimal?  @db.Decimal(5, 2)
+  maxSnf         Decimal?  @db.Decimal(5, 2)
+  importedAt     DateTime?
+  importedBy     String?
 
   /**
-   * OPTIONAL VERSIONING
+   * DAIRY / ADMIN RELATION
    */
-
-  effectiveFrom DateTime?
-
-  /**
-   * RELATION
-   */
-
   adminId String
+  admin   Admin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
 
-  admin Admin @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  createdBy String?
 
-  fatSteps FatStep[]
+  /**
+   * METHOD SPECIFIC RELATIONS
+   */
+  rateTable    RateChartCell[]
+  differential RateChartDifferential?
 
-  snfSteps SnfStep[]
-
-  rules BonusPenaltyRule[]
-
+  /**
+   * HISTORICAL AUDIT RELATION
+   */
   milkEntries MilkEntry[]
 
   /**
    * TIMESTAMPS
    */
-
   createdAt DateTime @default(now())
-
   updatedAt DateTime @updatedAt
 
+  @@index([adminId, milkType, status])
+  @@index([adminId, effectiveFrom, effectiveTo])
   @@index([adminId])
-  @@index([milkType])
-  @@index([category])
-  @@index([method])
-  @@index([isActive])
 }
 
-model FatStep {
-  id String @id @default(cuid())
-
-  /**
-   * STEP CONFIG
-   */
-
-  startValue Float
-
-  increment Float
-
-  /**
-   * RELATION
-   */
-
+/**
+ * RATE CHART CELL (B)
+ * Stores 2D Matrix (Fat x SNF -> Rate) values for Method 1 (RATE_TABLE)
+ */
+model RateChartCell {
+  id          String @id @default(cuid())
   rateChartId String
+
+  fat  Decimal @db.Decimal(5, 2)
+  snf  Decimal @db.Decimal(5, 2)
+  rate Decimal @db.Decimal(10, 4)
 
   rateChart RateChart @relation(fields: [rateChartId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
-
-  @@index([rateChartId])
+  @@unique([rateChartId, fat, snf])
+  @@index([rateChartId, fat, snf])
 }
 
-model SnfStep {
-  id String @id @default(cuid())
+/**
+ * RATE CHART DIFFERENTIAL (C)
+ * Stores Base & Differential parameters for Method 2 (BASE_DIFFERENTIAL)
+ */
+model RateChartDifferential {
+  id          String @id @default(cuid())
+  rateChartId String @unique
 
-  /**
-   * STEP CONFIG
-   */
+  baseFat  Decimal @db.Decimal(5, 2)
+  baseSnf  Decimal @db.Decimal(5, 2)
+  baseRate Decimal @db.Decimal(10, 4)
 
-  startValue Float
+  fatDifferential Decimal @db.Decimal(10, 4)
+  snfDifferential Decimal @db.Decimal(10, 4)
 
-  increment Float
+  differentialUnit Decimal @default(0.1) @db.Decimal(5, 3)
 
-  /**
-   * RELATION
-   */
-
-  rateChartId String
+  // Bounds & guardrails
+  minFat  Decimal? @db.Decimal(5, 2)
+  maxFat  Decimal? @db.Decimal(5, 2)
+  minSnf  Decimal? @db.Decimal(5, 2)
+  maxSnf  Decimal? @db.Decimal(5, 2)
+  minRate Decimal? @db.Decimal(10, 4)
+  maxRate Decimal? @db.Decimal(10, 4)
 
   rateChart RateChart @relation(fields: [rateChartId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@index([rateChartId])
-}
-
-model BonusPenaltyRule {
-  id String @id @default(cuid())
-
-  /**
-   * RULE TYPE
-   */
-
-  axis RuleAxis
-
-  /**
-   * RANGE
-   */
-
-  fromValue Float
-
-  toValue Float
-
-  /**
-   * BONUS / PENALTY
-   */
-
-  amount Float
-
-  /**
-   * RELATION
-   */
-
-  rateChartId String
-
-  rateChart RateChart @relation(fields: [rateChartId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-
-  @@index([rateChartId])
-}
-
-enum RateCategory {
-  COLLECTION
-  SALE
 }
 
 /**
@@ -700,22 +617,6 @@ model FoodSale {
   @@index([saleDate])
 }
 
-enum ChartType {
-  POINT
-  EXCEL
-}
-
-enum RateMethod {
-  FAT_SNF
-  FAT_ONLY
-  FIXED
-}
-
-enum RuleAxis {
-  FAT
-  SNF
-}
-
 model Advance {
   id String @id @default(cuid())
 
@@ -794,3 +695,46 @@ enum AdvanceTransactionType {
   ISSUED
   MANUAL_REPAYMENT
 }
+
+/**
+ * ========================================
+ * PHASE 2D: MILK ENTRY AUDIT & INTEGRITY
+ * ========================================
+ */
+
+enum MilkEntryAuditAction {
+  CREATED
+  CORRECTED
+  REVERSED
+  DELETED
+}
+
+model MilkEntryAudit {
+  id String @id @default(cuid())
+
+  milkEntryId String
+
+  adminId String
+  admin   Admin     @relation(fields: [adminId], references: [id], onDelete: Restrict)
+
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  rateChartId String?
+
+  action MilkEntryAuditAction
+
+  originalValues Json?
+  newValues      Json?
+
+  reason      String?
+  performedBy String?
+
+  createdAt DateTime @default(now())
+
+  @@index([milkEntryId])
+  @@index([adminId])
+  @@index([customerId])
+  @@index([createdAt])
+}
+

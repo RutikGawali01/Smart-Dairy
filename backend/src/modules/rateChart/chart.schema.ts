@@ -1,141 +1,146 @@
 import { z } from "zod";
+import { MilkType, RateCalculationMethod, RateChartStatus } from "@prisma/client";
 
 /**
- * COMMON ENUMS & STEPS
+ * Base Differential Configuration Schema
  */
-
-export const milkTypeEnum = z.enum(["COW", "BUFFALO", "MIX"]);
-export const chartTypeEnum = z.enum(["POINT", "EXCEL"]);
-export const rateMethodEnum = z.enum(["FAT_SNF", "FAT_ONLY", "FIXED"]);
-export const ruleAxisEnum = z.enum(["FAT", "SNF"]);
-
-export const fatStepSchema = z.object({
-  startValue: z.number().min(0, "FAT start value must be >= 0"),
-  increment: z.number().gt(0, "FAT step increment must be > 0"),
+export const differentialConfigSchema = z.object({
+  baseFat: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+    message: "Base Fat must be a positive number",
+  }),
+  baseSnf: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+    message: "Base SNF must be a positive number",
+  }),
+  baseRate: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+    message: "Base Rate must be a positive number",
+  }),
+  fatDifferential: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)), {
+    message: "Fat differential must be a valid number",
+  }),
+  snfDifferential: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)), {
+    message: "SNF differential must be a valid number",
+  }),
+  differentialUnit: z.union([z.number(), z.string()]).default("0.1"),
+  minFat: z.union([z.number(), z.string()]).nullish(),
+  maxFat: z.union([z.number(), z.string()]).nullish(),
+  minSnf: z.union([z.number(), z.string()]).nullish(),
+  maxSnf: z.union([z.number(), z.string()]).nullish(),
+  minRate: z.union([z.number(), z.string()]).nullish(),
+  maxRate: z.union([z.number(), z.string()]).nullish(),
 });
 
-export const snfStepSchema = z.object({
-  startValue: z.number().min(0, "SNF start value must be >= 0"),
-  increment: z.number().gt(0, "SNF step increment must be > 0"),
-});
-
-export const ruleSchema = z
+/**
+ * Create Rate Chart Schema
+ */
+export const createRateChartSchema = z
   .object({
-    axis: ruleAxisEnum,
-    fromValue: z.number().min(0, "From value must be >= 0"),
-    toValue: z.number().min(0, "To value must be >= 0"),
-    amount: z.number(), // Can be positive (bonus) or negative (penalty)
+    name: z
+      .string()
+      .trim()
+      .min(2, "Chart name must be at least 2 characters")
+      .max(100, "Chart name cannot exceed 100 characters"),
+    milkType: z.enum([MilkType.COW, MilkType.BUFFALO, MilkType.MIX], {
+      message: "Milk type must be COW, BUFFALO, or MIX",
+    }),
+    method: z.enum(
+      [RateCalculationMethod.RATE_TABLE, RateCalculationMethod.BASE_DIFFERENTIAL],
+      {
+        message: "Method must be RATE_TABLE or BASE_DIFFERENTIAL",
+      }
+    ),
+    effectiveFrom: z.string().datetime({ message: "effectiveFrom must be a valid ISO date string" }),
+    effectiveTo: z.string().datetime().nullish(),
+    differential: differentialConfigSchema.optional(),
   })
-  .refine((data) => data.fromValue < data.toValue, {
-    message: "fromValue must be strictly less than toValue",
-    path: ["toValue"],
-  });
+  .refine(
+    (data) => {
+      if (data.effectiveTo) {
+        return new Date(data.effectiveTo) >= new Date(data.effectiveFrom);
+      }
+      return true;
+    },
+    {
+      message: "Effective end date cannot be earlier than start date",
+      path: ["effectiveTo"],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.method === RateCalculationMethod.BASE_DIFFERENTIAL && !data.differential) {
+        return false;
+      }
+      return true;
+    },
+    {
+      message: "Differential configuration is required for BASE_DIFFERENTIAL method",
+      path: ["differential"],
+    }
+  );
 
-export const excelMatrixSchema = z.object({
-  fatHeader: z.array(z.number().min(0)).min(1, "At least one FAT header column required"),
-  snfHeader: z.array(z.number().min(0)).min(1, "At least one SNF header row required"),
-  rates: z.array(z.array(z.number().min(0))),
+/**
+ * Update Rate Chart Schema (Draft only)
+ */
+export const updateRateChartSchema = z
+  .object({
+    name: z.string().trim().min(2).max(100).optional(),
+    effectiveFrom: z.string().datetime().optional(),
+    effectiveTo: z.string().datetime().nullish(),
+    differential: differentialConfigSchema.optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.effectiveFrom && data.effectiveTo) {
+        return new Date(data.effectiveTo) >= new Date(data.effectiveFrom);
+      }
+      return true;
+    },
+    {
+      message: "Effective end date cannot be earlier than start date",
+      path: ["effectiveTo"],
+    }
+  );
+
+/**
+ * Preview Rate Calculation Schema
+ */
+export const previewRateSchema = z.object({
+  fat: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+    message: "Fat must be greater than 0",
+  }),
+  snf: z.union([z.number(), z.string()]).refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+    message: "SNF must be greater than 0",
+  }),
+  quantity: z
+    .union([z.number(), z.string()])
+    .default(1)
+    .refine((v) => !isNaN(Number(v)) && Number(v) > 0, {
+      message: "Quantity must be greater than 0",
+    }),
+  collectionDate: z.string().datetime().optional(),
 });
 
 /**
- * CREATE RATE CHART SCHEMA
+ * Activate Rate Chart Schema (Explicit replacement confirmation)
  */
-export const createChartSchema = {
-  body: z.object({
-    name: z.string().min(2, "Chart name must be at least 2 characters").max(100),
-    milkType: milkTypeEnum,
-    chartType: chartTypeEnum.default("POINT"),
-    method: rateMethodEnum.default("FAT_SNF"),
-    baseRate: z.number().min(0, "Base rate cannot be negative").default(0),
-
-    // Point-based steps & rules
-    fatSteps: z.array(fatStepSchema).optional().default([]),
-    snfSteps: z.array(snfStepSchema).optional().default([]),
-    rules: z.array(ruleSchema).optional().default([]),
-
-    // Excel-based matrix configuration
-    excelMatrix: excelMatrixSchema.optional(),
-  }),
-};
+export const activateChartSchema = z.object({
+  confirmReplace: z.boolean().optional().default(false),
+});
 
 /**
- * UPDATE RATE CHART SCHEMA (DRAFT ONLY)
+ * Confirm Matrix Import Schema
  */
-export const updateChartSchema = {
-  body: z.object({
-    name: z.string().min(2).max(100).optional(),
-    milkType: milkTypeEnum.optional(),
-    chartType: chartTypeEnum.optional(),
-    method: rateMethodEnum.optional(),
-    baseRate: z.number().min(0).optional(),
-    fatSteps: z.array(fatStepSchema).optional(),
-    snfSteps: z.array(snfStepSchema).optional(),
-    rules: z.array(ruleSchema).optional(),
-    excelMatrix: excelMatrixSchema.optional(),
-  }),
-};
+export const confirmImportSchema = z.object({
+  importToken: z.string().uuid("Invalid import token format"),
+});
 
 /**
- * PARAM VALIDATION
+ * Query / Filter Rate Charts Schema
  */
-export const chartIdSchema = {
-  params: z.object({
-    id: z.string().min(1, "Chart ID is required"),
-  }),
-};
-
-/**
- * QUERY SCHEMAS (PAGINATION & FILTERS)
- */
-export const getChartsQuerySchema = {
-  query: z.object({
-    page: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 1)),
-    limit: z.string().optional().transform((val) => (val ? parseInt(val, 10) : 10)),
-    search: z.string().optional(),
-    milkType: milkTypeEnum.optional(),
-    chartType: chartTypeEnum.optional(),
-    status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]).optional(),
-    sortBy: z.string().optional().default("createdAt"),
-    sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
-  }),
-};
-
-export const activeChartQuerySchema = {
-  query: z.object({
-    milkType: milkTypeEnum.optional(),
-    chartType: chartTypeEnum.optional(),
-    method: rateMethodEnum.optional(),
-  }),
-};
-
-/**
- * PREVIEW & EXCEL VALIDATION SCHEMAS
- */
-export const previewChartSchema = {
-  body: z.object({
-    method: rateMethodEnum.default("FAT_SNF"),
-    baseRate: z.number().min(0).default(0),
-    fatSteps: z.array(fatStepSchema).optional().default([]),
-    snfSteps: z.array(snfStepSchema).optional().default([]),
-    rules: z.array(ruleSchema).optional().default([]),
-    excelMatrix: excelMatrixSchema.optional(),
-    sampleFat: z.number().min(0).optional().default(3.5),
-    sampleSnf: z.number().min(0).optional().default(8.5),
-  }),
-};
-
-export const validateExcelSchema = {
-  body: z.object({
-    excelMatrix: excelMatrixSchema,
-  }),
-};
-
-export const calculateRateSchema = {
-  body: z.object({
-    milkType: milkTypeEnum,
-    fat: z.number().min(0, "FAT must be >= 0"),
-    snf: z.number().min(0, "SNF must be >= 0"),
-    quantity: z.number().gt(0, "Quantity must be > 0").default(1),
-    method: rateMethodEnum.optional().default("FAT_SNF"),
-  }),
-};
+export const queryRateChartsSchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(10),
+  search: z.string().optional(),
+  milkType: z.enum([MilkType.COW, MilkType.BUFFALO, MilkType.MIX]).optional(),
+  method: z.enum([RateCalculationMethod.RATE_TABLE, RateCalculationMethod.BASE_DIFFERENTIAL]).optional(),
+  status: z.enum([RateChartStatus.DRAFT, RateChartStatus.ACTIVE, RateChartStatus.INACTIVE, RateChartStatus.ARCHIVED]).optional(),
+});

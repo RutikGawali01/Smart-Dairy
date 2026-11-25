@@ -1,36 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { request } from '../utils/api';
 import { QUERY_KEYS } from './keys';
-import type { MilkEntry, CreateMilkEntryInput } from '../store/collection/useMilkCollectionStore';
-import { useMilkCollectionStore } from '../store/collection/useMilkCollectionStore';
-
-function mapRawMilkEntry(item: any): MilkEntry {
-  let dateStr = new Date().toISOString().split('T')[0];
-  if (item.date) {
-    const d = new Date(item.date);
-    dateStr =
-      d.getFullYear() +
-      '-' +
-      String(d.getMonth() + 1).padStart(2, '0') +
-      '-' +
-      String(d.getDate()).padStart(2, '0');
-  }
-  return {
-    id: item.id,
-    date: dateStr,
-    shift: item.shift,
-    quantity: item.quantity,
-    fat: item.fat ?? 0,
-    snf: item.snf ?? 0,
-    rate: item.rate ?? 0,
-    totalAmount: item.totalAmount ?? 0,
-    customerId: item.customerId,
-    customerName: item.customer?.name ?? 'Unknown',
-    customerCode: item.customer?.code ?? 0,
-    milkType: item.milkType,
-    createdAt: item.createdAt,
-  };
-}
+import type { 
+  MilkEntry, 
+  CreateMilkEntryInput, 
+  CorrectMilkEntryInput, 
+  ReverseMilkEntryInput 
+} from '../store/collection/useMilkCollectionStore';
+import { 
+  useMilkCollectionStore, 
+  mapRawMilkEntry 
+} from '../store/collection/useMilkCollectionStore';
 
 /**
  * Fetch today's milk collection entries with automatic deduplication & SWR caching.
@@ -80,14 +60,13 @@ export function useMilkMutations() {
       return await request('/milk/milk-entry', 'POST', {
         customerCode: String(entry.customerCode),
         code: Number(entry.customerCode),
+        customerId: entry.customerId,
         shift: entry.shift,
         milkType: entry.milkType,
         quantity: Number(entry.quantity),
         fat: Number(entry.fat),
-        snf: Number(entry.snf),
-        rate: entry.rate,
-        totalAmount: entry.totalAmount,
-        rateChartId: entry.rateChartId,
+        snf: Number(entry.snf ?? 0),
+        date: entry.date,
       });
     },
     onSuccess: () => {
@@ -105,10 +84,27 @@ export function useMilkMutations() {
       if (entry.quantity) payload.quantity = Number(entry.quantity);
       if (entry.fat !== undefined) payload.fat = Number(entry.fat);
       if (entry.snf !== undefined) payload.snf = Number(entry.snf);
-      if (entry.rate !== undefined) payload.rate = entry.rate;
-      if (entry.totalAmount !== undefined) payload.totalAmount = entry.totalAmount;
-      if (entry.rateChartId) payload.rateChartId = entry.rateChartId;
       return await request(`/milk/${id}`, 'PATCH', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
+    },
+  });
+
+  const correctEntry = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: CorrectMilkEntryInput }) => {
+      return await request(`/milk/${id}/correct`, 'POST', payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
+      queryClient.invalidateQueries({ queryKey: QUERY_KEYS.dashboard.stats() });
+    },
+  });
+
+  const reverseEntry = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: ReverseMilkEntryInput }) => {
+      return await request(`/milk/${id}/reverse`, 'POST', payload);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: QUERY_KEYS.milk.all });
@@ -129,6 +125,8 @@ export function useMilkMutations() {
   return {
     createEntry,
     updateEntry,
+    correctEntry,
+    reverseEntry,
     deleteEntry,
   };
 }

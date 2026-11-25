@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useUIStore, useAuthStore, useRateChartStore, useTranslation } from '../store';
+import { useUIStore, useAuthStore, useTranslation } from '../store';
 import LanguageSelector from './LanguageSelector';
 import { 
   Milk, 
@@ -8,9 +8,7 @@ import {
   Search, 
   ArrowRight, 
   CheckCircle2, 
-  FileSpreadsheet, 
   Calculator, 
-  Layers,
   ChevronDown,
   Menu,
   X,
@@ -24,10 +22,9 @@ export default function LandingPage() {
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const initialize = useAuthStore((state) => state.initialize);
-  const calculateRate = useRateChartStore((state) => state.calculateRate);
   const { t } = useTranslation();
 
-  const [activeTab, setActiveTab] = useState<'collection' | 'farmers' | 'rates' | 'feed'>('collection');
+  const [activeTab, setActiveTab] = useState<'collection' | 'farmers' | 'feed'>('collection');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Initialize auth state from local storage on mount
@@ -41,14 +38,13 @@ export default function LandingPage() {
   const [demoQty, setDemoQty] = useState(12.5);
   const [demoMilkType, setDemoMilkType] = useState<'COW' | 'BUFFALO' | 'MIX'>('COW');
 
-  const { rate, chartName } = calculateRate(demoMilkType, demoFat, demoSnf);
+  const rate = demoMilkType === 'BUFFALO' ? 58.5 : demoMilkType === 'COW' ? 38.5 : 42.0;
   const demoTotal = Number((demoQty * rate).toFixed(2));
 
   // Feature tab configurations
   const tabs = [
     { id: 'collection', label: t('landing', 'demoTabCollection'), icon: Milk },
     { id: 'farmers', label: t('landing', 'demoTabFarmers'), icon: Users },
-    { id: 'rates', label: t('landing', 'demoTabRates'), icon: FileSpreadsheet },
     { id: 'feed', label: t('landing', 'demoTabFeed'), icon: ShoppingBag },
   ];
 
@@ -358,7 +354,7 @@ export default function LandingPage() {
                       <Calculator className="w-3.5 h-3.5 text-[#0052cc]" /> {t('landing', 'collectionCalculator')}
                     </div>
                     <div className="text-[10px] text-gray-500 flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-500" /> {t('landing', 'activeChart')}: {chartName}
+                      <span className="w-2 h-2 rounded-full bg-green-500" /> ₹{rate.toFixed(2)}/L
                     </div>
                   </div>
 
@@ -487,82 +483,7 @@ export default function LandingPage() {
               </div>
             )}
 
-            {/* 3. RATES TAB PREVIEW */}
-            {activeTab === 'rates' && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-                
-                {/* Left explanation */}
-                <div className="lg:col-span-5 space-y-4">
-                  <h3 className="text-2xl font-display font-bold text-[#091e42] leading-snug">
-                    {t('landing', 'rateSlabsTitle')}
-                  </h3>
-                  <p className="text-sm text-gray-500 leading-relaxed font-medium">
-                    {t('landing', 'rateSlabsDesc')}
-                  </p>
-                  <ul className="space-y-2 text-xs text-gray-500">
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                      <span>{t('landing', 'cowBuffaloMixSheets')}</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                      <span>{t('landing', 'multipleActiveCharts')}</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                      <span>{t('landing', 'customizableSlabs')}</span>
-                    </li>
-                  </ul>
-                </div>
-
-                {/* Right Mock Grid */}
-                <div className="lg:col-span-7 bg-white border border-[#dfe1e6] rounded-xl p-4 shadow-lg">
-                  <div className="flex items-center justify-between pb-3 border-b border-gray-100 mb-3">
-                    <div className="text-xs font-bold text-[#091e42] uppercase tracking-wider flex items-center gap-1.5">
-                      <Layers className="w-3.5 h-3.5 text-[#0052cc]" /> {t('landing', 'activeCowSlabs')}
-                    </div>
-                    <span className="text-[10px] text-green-700 font-bold px-2 py-0.5 bg-green-50 border border-green-200 rounded">Cow Rate Chart</span>
-                  </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs border-collapse">
-                      <thead>
-                        <tr className="border-b border-gray-200 text-gray-400 text-[10px] font-bold uppercase">
-                          <th className="py-2">{t('landing', 'fatRange')}</th>
-                          <th className="py-2">{t('landing', 'snfRange')}</th>
-                          <th className="py-2 text-right">{t('landing', 'pricePerLitre')}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 text-gray-700">
-                        <tr>
-                          <td className="py-2 font-mono">3.0% - 3.4%</td>
-                          <td className="py-2 font-mono">7.5% - 8.0%</td>
-                          <td className="py-2 text-right font-bold text-[#091e42]">₹30.50</td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 font-mono">3.0% - 3.4%</td>
-                          <td className="py-2 font-mono">8.1% - 8.5%</td>
-                          <td className="py-2 text-right font-bold text-[#091e42]">₹32.00</td>
-                        </tr>
-                        <tr className="bg-[#deebff]/40">
-                          <td className="py-2 font-mono text-[#0052cc] font-bold">3.5% - 3.9%</td>
-                          <td className="py-2 font-mono text-[#0052cc] font-bold">8.0% - 8.5%</td>
-                          <td className="py-2 text-right font-bold text-[#0052cc]">₹34.50</td>
-                        </tr>
-                        <tr>
-                          <td className="py-2 font-mono">3.5% - 3.9%</td>
-                          <td className="py-2 font-mono">8.6% - 9.0%</td>
-                          <td className="py-2 text-right font-bold text-[#091e42]">₹36.00</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-              </div>
-            )}
-
-            {/* 4. FEED TAB PREVIEW */}
+            {/* 3. FEED TAB PREVIEW */}
             {activeTab === 'feed' && (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
                 
