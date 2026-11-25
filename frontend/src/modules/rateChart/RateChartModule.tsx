@@ -155,31 +155,31 @@ export const RateChartModule: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Top Banner & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-gray-200">
+      <div className="bg-white border border-gray-200 rounded-2xl p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-black text-[#091e42] tracking-tight">Rate Chart Management</h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Configure dynamic Base Differential formulas, import Excel Matrix tables, and manage effective dates.
+          <h2 className="text-2xl font-extrabold text-[#091e42] tracking-tight">Rate Chart Management</h2>
+          <p className="text-sm text-gray-600 mt-1">
+            Create, preview, and activate milk rate charts using FAT/SNF Excel tables or Base + Differential formulas.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-3 shrink-0">
           <button
             type="button"
             onClick={handleDownloadTemplate}
-            className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition cursor-pointer flex items-center gap-1.5"
+            className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm font-bold rounded-xl transition cursor-pointer flex items-center gap-2 border border-gray-200"
             title="Download blank Excel Matrix Template"
           >
-            <Download className="w-4 h-4 text-gray-600" />
-            <span className="hidden sm:inline">Excel Template</span>
+            <Download className="w-4 h-4 text-gray-700" />
+            <span>Excel Template</span>
           </button>
 
           <button
             type="button"
             onClick={() => setIsCreateOpen(true)}
-            className="px-4 py-2 bg-[#0052cc] hover:bg-[#0747a6] text-white text-xs font-bold rounded-xl transition shadow-md cursor-pointer flex items-center gap-1.5"
+            className="px-5 py-2.5 bg-[#0052cc] hover:bg-[#0747a6] text-white text-sm font-bold rounded-xl transition shadow-md cursor-pointer flex items-center gap-2"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 stroke-[2.5]" />
             <span>Create Rate Chart</span>
           </button>
         </div>
@@ -188,23 +188,23 @@ export const RateChartModule: React.FC = () => {
       {/* Feedback Banner */}
       {feedbackMsg && (
         <div
-          className={`p-3.5 rounded-xl border text-xs flex items-center justify-between ${
+          className={`p-4 rounded-xl border text-sm font-medium flex items-center justify-between shadow-2xs ${
             feedbackMsg.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-800'
-              : 'bg-red-50 border-red-200 text-red-800'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-red-50 border-red-200 text-red-900'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             {feedbackMsg.type === 'success' ? (
-              <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
+              <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
             ) : (
-              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+              <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
             )}
             <span>{feedbackMsg.text}</span>
           </div>
           <button
             onClick={() => setFeedbackMsg(null)}
-            className="font-bold hover:opacity-75 cursor-pointer ml-3 text-sm"
+            className="font-bold hover:opacity-75 cursor-pointer ml-4 text-lg leading-none px-1"
           >
             ×
           </button>
@@ -212,17 +212,17 @@ export const RateChartModule: React.FC = () => {
       )}
 
       {/* Filter Toolbar */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 shadow-2xs space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
           {/* Search */}
-          <div className="relative sm:col-span-1">
-            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-2.5" />
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-3.5" />
             <input
               type="text"
-              placeholder="Search by chart name..."
+              placeholder="Search chart name..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full light-input rounded-lg text-xs py-2 pl-9 pr-3"
+              className="w-full light-input rounded-xl text-sm py-2.5 pl-10 pr-3.5"
             />
           </div>
 
@@ -231,12 +231,12 @@ export const RateChartModule: React.FC = () => {
             <select
               value={filterMilkType}
               onChange={(e) => setFilterMilkType(e.target.value as any)}
-              className="w-full light-input rounded-lg text-xs py-2 px-3 bg-white"
+              className="w-full light-input rounded-xl text-sm py-2.5 px-3.5 bg-white font-medium"
             >
               <option value="">All Milk Types</option>
-              <option value="COW">COW</option>
-              <option value="BUFFALO">BUFFALO</option>
-              <option value="MIX">MIX</option>
+              <option value="COW">Cow Milk</option>
+              <option value="BUFFALO">Buffalo Milk</option>
+              <option value="MIX">Mix Milk</option>
             </select>
           </div>
 
@@ -245,11 +245,11 @@ export const RateChartModule: React.FC = () => {
             <select
               value={filterMethod}
               onChange={(e) => setFilterMethod(e.target.value as any)}
-              className="w-full light-input rounded-lg text-xs py-2 px-3 bg-white"
+              className="w-full light-input rounded-xl text-sm py-2.5 px-3.5 bg-white font-medium"
             >
               <option value="">All Calculation Methods</option>
-              <option value="BASE_DIFFERENTIAL">Base Differential</option>
-              <option value="RATE_TABLE">Table Matrix (Excel)</option>
+              <option value="BASE_DIFFERENTIAL">Base + Differential</option>
+              <option value="RATE_TABLE">FAT/SNF Table (Excel)</option>
             </select>
           </div>
 
@@ -258,13 +258,13 @@ export const RateChartModule: React.FC = () => {
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value as any)}
-              className="w-full light-input rounded-lg text-xs py-2 px-3 bg-white"
+              className="w-full light-input rounded-xl text-sm py-2.5 px-3.5 bg-white font-medium"
             >
               <option value="">All Statuses</option>
-              <option value="ACTIVE">ACTIVE</option>
-              <option value="DRAFT">DRAFT</option>
-              <option value="INACTIVE">INACTIVE</option>
-              <option value="ARCHIVED">ARCHIVED</option>
+              <option value="ACTIVE">Active</option>
+              <option value="DRAFT">Draft</option>
+              <option value="INACTIVE">Inactive</option>
+              <option value="ARCHIVED">Archived</option>
             </select>
           </div>
         </div>
@@ -272,14 +272,14 @@ export const RateChartModule: React.FC = () => {
 
       {/* Query Error Banner */}
       {isError && (
-        <div className="p-3.5 rounded-xl border bg-red-50 border-red-200 text-red-800 text-xs flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+        <div className="p-4 rounded-xl border bg-red-50 border-red-200 text-red-900 text-sm font-medium flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
             <span>Failed to load rate charts: {(queryError as any)?.message || 'Unknown error'}</span>
           </div>
           <button
             onClick={() => refetch()}
-            className="px-2.5 py-1 bg-white border border-red-200 rounded-lg font-bold hover:bg-red-100 cursor-pointer"
+            className="px-3.5 py-1.5 bg-white border border-red-200 rounded-lg font-bold hover:bg-red-100 cursor-pointer text-sm"
           >
             Retry
           </button>
@@ -294,29 +294,28 @@ export const RateChartModule: React.FC = () => {
           onActivate={handleActivate}
           onDeactivate={handleDeactivate}
           onDelete={handleDelete}
-          onUploadMatrix={(chart) => setImportTargetChart(chart)}
           onPreview={(chart) => setPreviewTargetChart(chart)}
           onHistory={(chart) => setHistoryTargetChart(chart)}
         />
 
         {/* Pagination Bar */}
         {data?.pagination && data.pagination.totalPages > 1 && (
-          <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500 bg-gray-50/50">
+          <div className="px-5 py-4 border-t border-gray-200 flex items-center justify-between text-sm text-gray-600 bg-gray-50/70">
             <span>
-              Showing Page {data.pagination.page} of {data.pagination.totalPages} ({data.pagination.total} total)
+              Page <strong>{data.pagination.page}</strong> of <strong>{data.pagination.totalPages}</strong> ({data.pagination.total} charts)
             </span>
-            <div className="flex gap-2">
+            <div className="flex gap-2.5">
               <button
                 disabled={page <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 font-medium cursor-pointer"
+                className="px-4 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 font-semibold cursor-pointer"
               >
                 Previous
               </button>
               <button
                 disabled={page >= data.pagination.totalPages}
                 onClick={() => setPage((p) => p + 1)}
-                className="px-3 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 font-medium cursor-pointer"
+                className="px-4 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50 font-semibold cursor-pointer"
               >
                 Next
               </button>
@@ -353,6 +352,7 @@ export const RateChartModule: React.FC = () => {
           isOpen={!!importTargetChart}
           chartId={importTargetChart.id}
           chartName={importTargetChart.name}
+          milkType={importTargetChart.milkType}
           onClose={() => setImportTargetChart(null)}
           onSuccess={() => {
             refetch();

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { X, Calculator, AlertTriangle, Loader2 } from 'lucide-react';
-import { rateChartApi } from '../rateChart.api';
-import type { RateChart, CalculateRateResult } from '../rateChart.types';
+import React from 'react';
+import { X, Table2, AlertTriangle, Loader2, FileSpreadsheet } from 'lucide-react';
+import { useRateChartDetailQuery } from '../rateChart.queries';
+import { MatrixGridPreview } from './MatrixGridPreview';
+import type { RateChart } from '../rateChart.types';
 
 interface RatePreviewModalProps {
   isOpen: boolean;
@@ -10,140 +11,78 @@ interface RatePreviewModalProps {
 }
 
 export const RatePreviewModal: React.FC<RatePreviewModalProps> = ({ isOpen, chart, onClose }) => {
-  const [fat, setFat] = useState('4.0');
-  const [snf, setSnf] = useState('8.5');
-  const [qty, setQty] = useState('10');
-  const [result, setResult] = useState<CalculateRateResult | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { data: detail, isLoading, error } = useRateChartDetailQuery(isOpen ? chart?.id : undefined);
 
   if (!isOpen || !chart) return null;
 
-  const handleCalculate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await rateChartApi.previewChartRate(chart.id, {
-        fat: Number(fat),
-        snf: Number(snf),
-        quantity: Number(qty),
-      });
-      setResult(res);
-    } catch (err: any) {
-      setError(err.message || 'Calculation preview failed');
-      setResult(null);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const cells = detail?.cells || [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-[#091e42] text-white">
-          <div className="flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-blue-300" />
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center">
+              <Table2 className="w-5 h-5 text-blue-300" />
+            </div>
             <div>
-              <h3 className="font-bold text-sm tracking-wide">Rate Calculator Preview</h3>
-              <p className="text-[11px] text-blue-200">{chart.name} ({chart.milkType})</p>
+              <h3 className="font-extrabold text-lg tracking-tight">Rate Chart Matrix Preview</h3>
+              <p className="text-xs text-blue-200">
+                {chart.name} · {chart.milkType} ·{' '}
+                {chart.method === 'RATE_TABLE' ? 'FAT/SNF Table' : 'Base + Differential'}
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-gray-400 hover:text-white transition cursor-pointer">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-gray-300 hover:text-white hover:bg-white/10 transition cursor-pointer"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-4 text-xs text-gray-700">
+        <div className="p-6 overflow-y-auto space-y-4">
+          {isLoading && (
+            <div className="py-16 flex flex-col items-center justify-center gap-3 text-gray-500 text-sm">
+              <Loader2 className="w-8 h-8 animate-spin text-[#0052cc]" />
+              <span className="font-semibold">Loading complete rate chart matrix...</span>
+            </div>
+          )}
+
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+            <div className="p-4 bg-red-50 border border-red-200 text-red-800 text-sm rounded-xl flex items-center gap-2.5">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-red-600" />
+              <span>{(error as any)?.message || 'Failed to load rate chart matrix.'}</span>
             </div>
           )}
 
-          <form onSubmit={handleCalculate} className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">FAT (%)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={fat}
-                  onChange={(e) => setFat(e.target.value)}
-                  className="w-full light-input rounded-lg text-xs py-1.5 px-2 text-center"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">SNF (%)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={snf}
-                  onChange={(e) => setSnf(e.target.value)}
-                  className="w-full light-input rounded-lg text-xs py-1.5 px-2 text-center"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Quantity (L)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0.1"
-                  value={qty}
-                  onChange={(e) => setQty(e.target.value)}
-                  className="w-full light-input rounded-lg text-xs py-1.5 px-2 text-center"
-                  required
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full bg-[#0052cc] hover:bg-[#0747a6] disabled:bg-blue-300 text-white font-bold text-xs py-2 rounded-lg transition shadow cursor-pointer flex items-center justify-center gap-2"
-            >
-              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Calculate Test Rate'}
-            </button>
-          </form>
-
-          {/* Results Display */}
-          {result && (
-            <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-xl space-y-3">
-              <div className="flex justify-between items-center border-b border-blue-200/80 pb-2">
-                <span className="text-xs text-gray-600 font-semibold">Applied Rate:</span>
-                <span className="text-xl font-black text-[#0052cc]">₹{result.rate} <span className="text-xs font-normal text-gray-500">/ Litre</span></span>
-              </div>
-
-              <div className="flex justify-between items-center text-xs">
-                <span className="text-gray-600 font-medium">Total Payout ({result.quantity} L):</span>
-                <span className="text-base font-extrabold text-[#091e42]">₹{result.totalAmount}</span>
-              </div>
-
-              {result.details?.formulaDescription && (
-                <div className="pt-2 border-t border-blue-200/60 text-[11px] text-gray-600 space-y-1">
-                  <span className="font-semibold text-gray-700 block">Calculation Details:</span>
-                  <p className="bg-white p-2 rounded-lg border border-blue-100 font-mono text-[10px]">
-                    {result.details.formulaDescription}
-                  </p>
-                </div>
-              )}
+          {!isLoading && !error && cells.length === 0 && (
+            <div className="py-14 text-center text-gray-500 space-y-2 border border-dashed border-gray-300 rounded-xl bg-gray-50/50">
+              <FileSpreadsheet className="w-10 h-10 mx-auto text-gray-300" />
+              <p className="text-base font-bold text-gray-700">No Rate Matrix Available</p>
+              <p className="text-sm text-gray-500">
+                {chart.method === 'RATE_TABLE'
+                  ? 'No Excel rate cells have been uploaded to this draft chart yet.'
+                  : 'Differential configuration is missing for this chart.'}
+              </p>
             </div>
           )}
 
-          <div className="pt-2 flex justify-end">
+          {!isLoading && !error && cells.length > 0 && (
+            <MatrixGridPreview
+              cells={cells}
+              milkType={chart.milkType}
+              chartName={chart.name}
+            />
+          )}
+
+          <div className="pt-2 flex justify-end border-t border-gray-100">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-100 rounded-lg transition cursor-pointer"
+              className="px-5 py-2.5 text-sm font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-xl transition cursor-pointer"
             >
               Close
             </button>

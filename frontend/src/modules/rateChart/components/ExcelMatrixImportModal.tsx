@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { X, FileSpreadsheet, CheckCircle, AlertTriangle, AlertCircle, Loader2 } from 'lucide-react';
 import { useRateChartMutations } from '../rateChart.queries';
-import type { ExcelValidateResponse } from '../rateChart.types';
+import { MatrixGridPreview } from './MatrixGridPreview';
+import type { ExcelValidateResponse, MilkType } from '../rateChart.types';
 
 interface ExcelMatrixImportModalProps {
   isOpen: boolean;
   chartId: string;
   chartName: string;
+  milkType?: MilkType;
   onClose: () => void;
   onSuccess?: () => void;
 }
@@ -15,6 +17,7 @@ export const ExcelMatrixImportModal: React.FC<ExcelMatrixImportModalProps> = ({
   isOpen,
   chartId,
   chartName,
+  milkType,
   onClose,
   onSuccess,
 }) => {
@@ -72,7 +75,11 @@ export const ExcelMatrixImportModal: React.FC<ExcelMatrixImportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full overflow-hidden flex flex-col max-h-[92vh]">
+      <div
+        className={`bg-white rounded-2xl shadow-2xl w-full overflow-hidden flex flex-col max-h-[92vh] ${
+          validationResult ? 'max-w-5xl' : 'max-w-3xl'
+        }`}
+      >
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-[#091e42] text-white">
           <div className="flex items-center gap-2">
@@ -160,60 +167,14 @@ export const ExcelMatrixImportModal: React.FC<ExcelMatrixImportModalProps> = ({
                 )}
               </div>
 
-              {/* Matrix Metrics */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-gray-50 border rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-bold text-gray-500 block">Total Cells</span>
-                  <span className="text-lg font-black text-[#091e42]">{validationResult.totalCells}</span>
-                </div>
-                <div className="p-3 bg-gray-50 border rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-bold text-gray-500 block">FAT Range</span>
-                  <span className="text-sm font-bold text-[#091e42]">
-                    {validationResult.minFat}% – {validationResult.maxFat}%
-                  </span>
-                </div>
-                <div className="p-3 bg-gray-50 border rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-bold text-gray-500 block">SNF Range</span>
-                  <span className="text-sm font-bold text-[#091e42]">
-                    {validationResult.minSnf}% – {validationResult.maxSnf}%
-                  </span>
-                </div>
-                <div className="p-3 bg-gray-50 border rounded-xl text-center">
-                  <span className="text-[10px] uppercase font-bold text-gray-500 block">Grid Dimensions</span>
-                  <span className="text-sm font-bold text-emerald-700">
-                    {validationResult.totalFatSteps} × {validationResult.totalSnfSteps}
-                  </span>
-                </div>
-              </div>
-
-              {/* Sample Matrix Cells Preview */}
-              {validationResult.sampleCells && validationResult.sampleCells.length > 0 && (
-                <div className="space-y-2">
-                  <span className="text-xs font-bold text-gray-700 block">
-                    Sample Rate Cells Preview (First {validationResult.sampleCells.length} cells):
-                  </span>
-                  <div className="border border-gray-200 rounded-xl overflow-x-auto max-h-48">
-                    <table className="w-full text-center text-xs">
-                      <thead className="bg-gray-100 text-gray-700 font-bold sticky top-0">
-                        <tr>
-                          <th className="py-2 px-3 border-r">FAT (%)</th>
-                          <th className="py-2 px-3 border-r">SNF (%)</th>
-                          <th className="py-2 px-3">Rate (₹/L)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200">
-                        {validationResult.sampleCells.map((cell, idx) => (
-                          <tr key={idx} className="hover:bg-blue-50/30">
-                            <td className="py-1.5 px-3 font-bold bg-gray-50 border-r">{cell.fat}%</td>
-                            <td className="py-1.5 px-3 border-r">{cell.snf}%</td>
-                            <td className="py-1.5 px-3 font-mono font-semibold text-emerald-700">₹{cell.rate}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {/* Complete 2D Rate Matrix Preview */}
+              <MatrixGridPreview
+                cells={validationResult.cells || validationResult.sampleCells || []}
+                fatSteps={validationResult.fatSteps}
+                snfSteps={validationResult.snfSteps}
+                milkType={milkType}
+                chartName={chartName}
+              />
 
               {/* Warnings / Notices */}
               {validationResult.warnings && validationResult.warnings.length > 0 && (

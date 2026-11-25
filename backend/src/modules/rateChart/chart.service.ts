@@ -7,6 +7,7 @@ import logger from "../../config/logger.js";
 import ApiError from "../../utils/ApiError.js";
 import { Decimal } from "../../utils/decimal.js";
 import { RateCalculationService } from "./services/rateCalculation.service.js";
+import { calculateDifferentialRate } from "./calculators/differential.calculator.js";
 import { parseRateMatrixExcel, generateRateChartTemplate, ParsedMatrixCell } from "./utils/excelParser.js";
 import {
   getIstStartOfDay,
@@ -217,19 +218,64 @@ export class RateChartService {
       throw new ApiError(404, "Rate chart not found");
     }
 
-    // Include sample cells if RATE_TABLE for instant UI preview
+    // Include full matrix cells for both RATE_TABLE and BASE_DIFFERENTIAL previews
     let sampleCells: any[] = [];
+    let cells: Array<{ fat: string; snf: string; rate: string }> = [];
+
     if (chart.method === RateCalculationMethod.RATE_TABLE) {
-      sampleCells = await prisma.rateChartCell.findMany({
+      const allCells = await prisma.rateChartCell.findMany({
         where: { rateChartId: id },
-        take: 15,
         orderBy: [{ fat: "asc" }, { snf: "asc" }],
       });
+      sampleCells = allCells.slice(0, 15);
+      cells = allCells.map((c) => ({
+        fat: c.fat.toFixed(1),
+        snf: c.snf.toFixed(1),
+        rate: c.rate.toFixed(2),
+      }));
+    } else if (chart.method === RateCalculationMethod.BASE_DIFFERENTIAL && chart.differential) {
+      const diff = chart.differential;
+      const stepVal = new Decimal(diff.differentialUnit?.toString() || "0.1");
+      const step = stepVal.greaterThan(0) ? stepVal : new Decimal("0.1");
+
+      const baseFat = new Decimal(diff.baseFat.toString());
+      const baseSnf = new Decimal(diff.baseSnf.toString());
+
+      const minFat = diff.minFat
+        ? new Decimal(diff.minFat.toString())
+        : Decimal.max(new Decimal("1.0"), baseFat.minus("1.5"));
+      const maxFat = diff.maxFat
+        ? new Decimal(diff.maxFat.toString())
+        : baseFat.plus("2.5");
+      const minSnf = diff.minSnf
+        ? new Decimal(diff.minSnf.toString())
+        : Decimal.max(new Decimal("5.0"), baseSnf.minus("1.0"));
+      const maxSnf = diff.maxSnf
+        ? new Decimal(diff.maxSnf.toString())
+        : baseSnf.plus("1.0");
+
+      let rowCount = 0;
+      for (let f = minFat; f.lessThanOrEqualTo(maxFat) && rowCount < 150; f = f.plus(step), rowCount++) {
+        let colCount = 0;
+        for (let s = minSnf; s.lessThanOrEqualTo(maxSnf) && colCount < 100; s = s.plus(step), colCount++) {
+          const res = calculateDifferentialRate({
+            appliedFat: f,
+            appliedSnf: s,
+            config: diff,
+          });
+          cells.push({
+            fat: f.toFixed(1),
+            snf: s.toFixed(1),
+            rate: res.roundedRate.toFixed(2),
+          });
+        }
+      }
     }
 
     return {
       ...chart,
       sampleCells,
+      cells,
     };
   }
 

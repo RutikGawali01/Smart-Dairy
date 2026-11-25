@@ -47,6 +47,7 @@ export interface RateChart {
   importedBy?: string | null;
   adminId: string;
   differential?: RateChartDifferential | null;
+  cells?: Array<{ fat: string; snf: string; rate: string }>;
   _count?: {
     rateTable?: number;
     milkEntries?: number;
@@ -163,6 +164,7 @@ export interface ExcelValidateResponse {
   minSnf: string;
   maxSnf: string;
   sampleCells: Array<{ fat: string; snf: string; rate: string }>;
+  cells?: Array<{ fat: string; snf: string; rate: string }>;
   fatSteps?: string[];
   snfSteps?: string[];
   errors: string[];
